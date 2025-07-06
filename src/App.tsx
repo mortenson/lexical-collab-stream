@@ -7,13 +7,12 @@
  */
 
 import {AutoFocusPlugin} from '@lexical/react/LexicalAutoFocusPlugin';
-import {LexicalComposer} from '@lexical/react/LexicalComposer';
+import {InitialConfigType, LexicalComposer} from '@lexical/react/LexicalComposer';
 import {ContentEditable} from '@lexical/react/LexicalContentEditable';
 import {LexicalErrorBoundary} from '@lexical/react/LexicalErrorBoundary';
 import {HistoryPlugin} from '@lexical/react/LexicalHistoryPlugin';
 import {RichTextPlugin} from '@lexical/react/LexicalRichTextPlugin';
 import {
-  $applyNodeReplacement,
   $isTextNode,
   DOMConversionMap,
   DOMExportOutput,
@@ -62,8 +61,8 @@ const exportMap: DOMExportOutputMap = new Map<
   Klass<LexicalNode>,
   (editor: LexicalEditor, target: LexicalNode) => DOMExportOutput
 >([
-  [ParagraphNode, removeStylesExportDOM],
-  [TextNode, removeStylesExportDOM],
+  [SyncParagraphNode, removeStylesExportDOM],
+  [SyncTextNode, removeStylesExportDOM],
 ]);
 
 const getExtraStyles = (element: HTMLElement): string => {
@@ -131,7 +130,8 @@ const constructImportMap = (): DOMConversionMap => {
   return importMap;
 };
 
-const editorConfig = {
+const editorConfig: InitialConfigType = {
+  editorState: null,
   html: {
     export: exportMap,
     import: constructImportMap(),
