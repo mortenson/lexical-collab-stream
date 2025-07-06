@@ -1,21 +1,22 @@
-import { WebSocketServer } from 'ws';
+import { WebSocketServer, WebSocket } from 'ws';
+import Redis from 'ioredis'
+
+// @todo: run real webserver and have this be in path, or put in every message
+const documentId = 'documentId'
+
+console.log('Connecting to Redis...')
+const redis = new Redis();
+await redis.ping()
+console.log('Connected to Redis!')
+redis.del(`redisStream:${documentId}`)
 
 const wss = new WebSocketServer({ port: 9045, host: '127.0.0.1' });
 
-let initialEditorState = `{
+console.log('Serving websockets on 127.0.0.1:9045')
+
+let defaultEditorState = `{
   "root": {
     "children": [
-      {
-        "children": [],
-        "direction": null,
-        "format": "",
-        "indent": 0,
-        "type": "sync-paragraph",
-        "version": 1,
-        "syncId": "0197dd32-49e6-7509-a786-ed4de759b212",
-        "textFormat": 0,
-        "textStyle": ""
-      }
     ],
     "direction": null,
     "format": "",
@@ -25,7 +26,20 @@ let initialEditorState = `{
   }
 }`
 
-let messageStack: any[] = []
+const sendInitMessage = async (ws: WebSocket) => {
+  const result = await redis.get(`editorStates:${documentId}`);
+  if (result) {
+    ws.send(JSON.stringify({
+      type: 'init',
+      editorState: JSON.parse(result),
+    }))
+  } else {
+    ws.send(JSON.stringify({
+      type: 'init',
+      editorState: JSON.parse(defaultEditorState),
+    }))
+  }
+}
 
 wss.on('connection', ws => {
   ws.on('error', console.error);
@@ -37,23 +51,31 @@ wss.on('connection', ws => {
       return
     }
     const messages: any[] = JSON.parse(data.toString())
-    messageStack.push(...messages)
+    messages.forEach(message => {
+      redis.xadd(`editorStreams:${documentId}`, '*', 'message', JSON.stringify(message))
+    })
   });
 
-  ws.send(JSON.stringify({
-    type: 'init',
-    editorState: initialEditorState,
-  }))
-});
+  sendInitMessage(ws)
+})
 
-let timerId = setTimeout(function tick() {
-  wss.clients.forEach(client => {
-    if (client.readyState === WebSocket.OPEN) {
-      messageStack.forEach(message => {
-        client.send(JSON.stringify(message))
-      })
-    }
+async function listenForMessage(lastId = "0") {
+  const results = await redis.xread("STREAMS", `editorStreams:${documentId}`, lastId);
+  if (results === null || results.length === 0) {
+    await listenForMessage(lastId);
+    return
+  }
+
+  const [_, messages] = results[0];
+
+  wss.clients.forEach(ws => {
+    messages.forEach(([id, message]) => {
+      ws.send(message[1])
+    });
   })
-  messageStack = []
-  timerId = setTimeout(tick, 100);
-}, 100);
+
+  // Pass the last id of the results to the next round.
+  await listenForMessage(messages[messages.length - 1][0]);
+}
+
+listenForMessage();

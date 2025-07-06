@@ -152,7 +152,7 @@ export default function CollaborationPlugin() {
         }
         switch (message.type) {
           case 'init':
-            editor.setEditorState(editor.parseEditorState(message.editorState))
+            // editor.setEditorState(editor.parseEditorState(message.editorState))
             editor.setEditable(true)
             break
           case 'upserted':
