@@ -55,5 +55,5 @@ let timerId = setTimeout(function tick() {
     }
   })
   messageStack = []
-  timerId = setTimeout(tick, 500);
-}, 500);
+  timerId = setTimeout(tick, 100);
+}, 100);

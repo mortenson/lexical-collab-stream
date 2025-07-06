@@ -2,7 +2,7 @@
 import { useEffect } from 'react';
 import {useLexicalComposerContext} from '@lexical/react/LexicalComposerContext';
 import { $createSyncParagraphNode, $createSyncTextNode, SerializedSyncParagraphNode, SerializedSyncTextNode, SYNC_ID_UNSET, syncIdState, SyncParagraphNode, SyncTextNode } from '../Nodes';
-import { $getNodeByKey, $getRoot, $getState, $isElementNode, LexicalNode, MutationListener, NodeKey, NodeMutation } from 'lexical';
+import { $getNodeByKey, $getRoot, $getSelection, $getState, $isElementNode, $isRangeSelection, LexicalNode, MutationListener, NodeKey, NodeMutation } from 'lexical';
 import { SerializedSyncNode, SyncMessage } from '../Messages';
 import { $dfs } from '@lexical/utils';
 
@@ -18,7 +18,6 @@ export default function CollaborationPlugin() {
   const [editor] = useLexicalComposerContext();
   useEffect(() => {
     editor.setEditable(false)
-
     const userId = "user_" + Math.floor(Math.random() * 100);
     // Connect to server
     // @todo: block editing until conencted
@@ -45,7 +44,14 @@ export default function CollaborationPlugin() {
         return
       }
     }
+    let mapInit = false
     const getNodeBySyncId = (syncId: string): LexicalNode | undefined => {
+      if (!mapInit) {
+        $dfs().forEach(dfsNode => {
+          mapSyncIdToNodeKey($getState(dfsNode.node, syncIdState), dfsNode.node.getKey())
+        })
+        mapInit = true
+      }
       const nodeKey = syncIdToNodeKey.get(syncId)
       if (!nodeKey) {
         return
@@ -66,7 +72,7 @@ export default function CollaborationPlugin() {
       messageStack = []
     }
     let isSyncing = false
-    const mutationListener: MutationListener = (nodes: Map<NodeKey, NodeMutation>, payload): void => {
+    const mutationListener: MutationListener = (nodes: Map<NodeKey, NodeMutation>): void => {
       if (isSyncing) {
         return
       }
@@ -117,6 +123,22 @@ export default function CollaborationPlugin() {
     const cleanupListeners: (() => void)[] = []
     cleanupListeners.push(editor.registerMutationListener(SyncParagraphNode, mutationListener))
     cleanupListeners.push(editor.registerMutationListener(SyncTextNode, mutationListener))
+    // Optional - more text nodes === better syncing within a paragraph...
+    cleanupListeners.push(editor.registerNodeTransform(SyncTextNode, (node: SyncTextNode): void => {
+      const text = node.getTextContent()
+      if (text.length <= 1) {
+        return
+      }
+      const selection = $getSelection()
+      let spaceIndex = -1
+      if ($isRangeSelection(selection) && selection.anchor.key === node.getKey() && selection.anchor.offset <= text.length && text[selection.anchor.offset - 1] === ' ') {
+        spaceIndex = selection.anchor.offset - 1
+      }
+      if (spaceIndex === -1) {
+        return
+      }
+      node.splitText(spaceIndex)
+    }))
     ws.addEventListener('error', console.error);
     ws.addEventListener('open', () => flushStack());
     ws.addEventListener('message', wsMessage => {
@@ -130,9 +152,6 @@ export default function CollaborationPlugin() {
         switch (message.type) {
           case 'init':
             editor.setEditorState(editor.parseEditorState(message.editorState))
-            $dfs().forEach(dfsNode => {
-              mapSyncIdToNodeKey($getState(dfsNode.node, syncIdState), dfsNode.node.getKey())
-            })
             editor.setEditable(true)
             break
           case 'upserted':
