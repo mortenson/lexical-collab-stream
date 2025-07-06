@@ -14,19 +14,19 @@ const getNodeSyncId = (node: LexicalNode): string | undefined => {
   return syncId
 }
 
+const SYNC_TAG = 'SYNC_TAG'
+
 export default function CollaborationPlugin() {
   const [editor] = useLexicalComposerContext();
   useEffect(() => {
     editor.setEditable(false)
     const userId = "user_" + Math.floor(Math.random() * 100);
     // Connect to server
-    // @todo: block editing until conencted
     const ws = new WebSocket('ws://127.0.0.1:9045');
     // Map of Sync IDs (UUIDs) to local NodeKeys
     const syncIdToNodeKey: Map<string, NodeKey> = new Map();
     const nodeKeyToSyncId: Map<NodeKey, string> = new Map();
     const mapSyncIdToNodeKey = (syncId: string, nodeKey: NodeKey) => {
-      console.log(`${syncId} => ${nodeKey}`)
       if (nodeKey === 'root') {
         console.error(`Attempted to record root ID ${syncId} => ${nodeKey}`)
         return
@@ -71,25 +71,26 @@ export default function CollaborationPlugin() {
       ws.send(JSON.stringify(messageStack))
       messageStack = []
     }
-    let isSyncing = false
-    const mutationListener: MutationListener = (nodes: Map<NodeKey, NodeMutation>): void => {
-      if (isSyncing) {
+    const mutationListener: MutationListener = (nodes: Map<NodeKey, NodeMutation>, { updateTags }): void => {
+      if (updateTags.has(SYNC_TAG)) {
         return
       }
       editor.read(() => {
         nodes.forEach((mutation, nodeKey) => {
-          console.log(mutation, nodeKey)
           switch (mutation) {
             case 'created':
             case 'updated':
               const node = $getNodeByKey(nodeKey)
               if (!node) {
+                console.log(`Node not found ${nodeKey}`)
                 return
               }
               const syncId = $getState(node, syncIdState)
               if (syncId === SYNC_ID_UNSET) {
+                console.log(`Node does not have sync ID ${nodeKey}`)
                 return
               }
+              mapSyncIdToNodeKey(syncId, nodeKey)
               const previous = node.getPreviousSibling()
               const next = node.getNextSibling()
               const parent = node.getParent()
@@ -129,6 +130,7 @@ export default function CollaborationPlugin() {
       if (text.length <= 1) {
         return
       }
+      // Did the user just type (or visit) a space? Split the text to create more nodes.
       const selection = $getSelection()
       let spaceIndex = -1
       if ($isRangeSelection(selection) && selection.anchor.key === node.getKey() && selection.anchor.offset <= text.length && text[selection.anchor.offset - 1] === ' ') {
@@ -142,7 +144,6 @@ export default function CollaborationPlugin() {
     ws.addEventListener('error', console.error);
     ws.addEventListener('open', () => flushStack());
     ws.addEventListener('message', wsMessage => {
-      isSyncing = true
       editor.update(() => {
         const message: SyncMessage = JSON.parse(wsMessage.data)
         // Ignore own messages.
@@ -155,6 +156,7 @@ export default function CollaborationPlugin() {
             editor.setEditable(true)
             break
           case 'upserted':
+            console.log(`upsert ${message.node.syncId}`)
             // Update
             const nodeToUpdate = getNodeBySyncId(message.node.syncId)
             if (nodeToUpdate) {
@@ -213,6 +215,7 @@ export default function CollaborationPlugin() {
             }
             break
           case 'destroyed':
+            console.log(`destroy ${message.syncId}`)
             const nodeToDestroy = getNodeBySyncId(message.syncId)
             if (!nodeToDestroy) {
               console.error(`Destroy key not found: ${message.syncId}`)
@@ -224,7 +227,7 @@ export default function CollaborationPlugin() {
             console.error(`Unknown message type: ${wsMessage.data}`)
             return
         }
-      }, { onUpdate: () => isSyncing = false })
+      }, { tag: SYNC_TAG })
     });
     return () => {
       cleanupListeners.forEach(f => f())

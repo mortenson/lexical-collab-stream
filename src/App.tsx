@@ -142,11 +142,13 @@ const editorConfig: InitialConfigType = {
       SyncTextNode,
       {
           replace: ParagraphNode,
+          // @todo: do I need to clone more properties ?
           with: () => $createSyncParagraphNode(),
           withKlass: SyncParagraphNode,
       },
       {
           replace: TextNode,
+          // @todo: do I need to clone more properties ?
           with: (node: TextNode) => $createSyncTextNode(node.__text),
           withKlass: SyncTextNode,
       }
