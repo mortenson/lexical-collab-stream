@@ -1,44 +1,72 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import Redis from 'ioredis'
+import type { SerializedEditorState } from 'lexical';
+import type { SyncMessage } from './src/Messages'
 
 // @todo: run real webserver and have this be in path, or put in every message
-const documentId = 'documentId'
+// @todo: also put the lastId the client saw in a query param or something
+const defaultDocumentId = 'documentId'
 
 console.log('Connecting to Redis...')
 const redis = new Redis();
 await redis.ping()
 console.log('Connected to Redis!')
-redis.del(`redisStream:${documentId}`)
+
+// Just easier to demo without state in redis for now
+redis.del(`streams:${defaultDocumentId}`)
+redis.del(`documents:${defaultDocumentId}`)
 
 const wss = new WebSocketServer({ port: 9045, host: '127.0.0.1' });
 
 console.log('Serving websockets on 127.0.0.1:9045')
 
-let defaultEditorState = `{
-  "root": {
-    "children": [
-    ],
-    "direction": null,
-    "format": "",
-    "indent": 0,
-    "type": "root",
-    "version": 1
-  }
-}`
+type RedisDocument = {
+  editorState: SerializedEditorState
+  lastId: string
+}
 
-const sendInitMessage = async (ws: WebSocket) => {
-  const result = await redis.get(`editorStates:${documentId}`);
-  if (result) {
-    ws.send(JSON.stringify({
-      type: 'init',
-      editorState: JSON.parse(result),
-    }))
-  } else {
-    ws.send(JSON.stringify({
-      type: 'init',
-      editorState: JSON.parse(defaultEditorState),
-    }))
+let defaultRedisDocument: RedisDocument = {
+  lastId: "0",
+  editorState: {
+    root: {
+      children: [],
+      direction: null,
+      format: "",
+      indent: 0,
+      type: "root",
+      version: 1
+    }
   }
+}
+
+const sendInitMessage = async (ws: WebSocket, documentId: string) => {
+  const result = await redis.get(`documents:${documentId}`);
+  const document: RedisDocument = result !== null ? JSON.parse(result) : defaultRedisDocument
+  ws.send(JSON.stringify({
+    type: 'init',
+    editorState: document.editorState,
+    lastId: document.lastId,
+  }))
+}
+
+const delay = (time: number) => new Promise( res => setTimeout(res, time));
+
+async function listenForMessage(ws: WebSocket, documentId: string, lastId = "0") {
+  const results = await redis.xread("STREAMS", `streams:${documentId}`, lastId);
+  if (results === null || results.length === 0) {
+    // Some delay is fine when no results are returned given that we track lastId.
+    await delay(50)
+    await listenForMessage(ws, documentId, lastId);
+    return
+  }
+
+  const [_, messages] = results[0];
+
+  messages.forEach(([_, message]) => {
+    ws.send(message[1])
+  });
+
+  await listenForMessage(ws, documentId, messages[messages.length - 1][0]);
 }
 
 wss.on('connection', ws => {
@@ -50,32 +78,18 @@ wss.on('connection', ws => {
       console.error(`Unexpected binary message: ${str}`)
       return
     }
-    const messages: any[] = JSON.parse(data.toString())
+    const messages: SyncMessage[] = JSON.parse(data.toString())
+
+    // Special case: begin streaming when client is ready.
+    if (messages.length === 1 && messages[0].type === 'init-received') {
+      listenForMessage(ws, defaultDocumentId, messages[0].lastId)
+      return
+    }
+
     messages.forEach(message => {
-      redis.xadd(`editorStreams:${documentId}`, '*', 'message', JSON.stringify(message))
+      redis.xadd(`streams:${defaultDocumentId}`, '*', 'message', JSON.stringify(message))
     })
   });
 
-  sendInitMessage(ws)
+  sendInitMessage(ws, defaultDocumentId)
 })
-
-async function listenForMessage(lastId = "0") {
-  const results = await redis.xread("STREAMS", `editorStreams:${documentId}`, lastId);
-  if (results === null || results.length === 0) {
-    await listenForMessage(lastId);
-    return
-  }
-
-  const [_, messages] = results[0];
-
-  wss.clients.forEach(ws => {
-    messages.forEach(([id, message]) => {
-      ws.send(message[1])
-    });
-  })
-
-  // Pass the last id of the results to the next round.
-  await listenForMessage(messages[messages.length - 1][0]);
-}
-
-listenForMessage();

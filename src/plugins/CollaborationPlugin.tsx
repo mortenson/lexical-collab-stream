@@ -26,6 +26,8 @@ export default function CollaborationPlugin() {
     // Map of Sync IDs (UUIDs) to local NodeKeys
     const syncIdToNodeKey: Map<string, NodeKey> = new Map();
     const nodeKeyToSyncId: Map<NodeKey, string> = new Map();
+    // @todo pass this on re-connect
+    let lastId = "0"
     const mapSyncIdToNodeKey = (syncId: string, nodeKey: NodeKey) => {
       if (nodeKey === 'root') {
         console.error(`Attempted to record root ID ${syncId} => ${nodeKey}`)
@@ -82,12 +84,12 @@ export default function CollaborationPlugin() {
             case 'updated':
               const node = $getNodeByKey(nodeKey)
               if (!node) {
-                console.log(`Node not found ${nodeKey}`)
+                console.error(`Node not found ${nodeKey}`)
                 return
               }
               const syncId = $getState(node, syncIdState)
               if (syncId === SYNC_ID_UNSET) {
-                console.log(`Node does not have sync ID ${nodeKey}`)
+                console.error(`Node does not have sync ID ${nodeKey}`)
                 return
               }
               mapSyncIdToNodeKey(syncId, nodeKey)
@@ -152,11 +154,21 @@ export default function CollaborationPlugin() {
         }
         switch (message.type) {
           case 'init':
-            // editor.setEditorState(editor.parseEditorState(message.editorState))
+            lastId = message.lastId
+            const editorState = editor.parseEditorState(message.editorState)
+            if (!editorState.isEmpty()) {
+              editor.setEditorState(editorState)
+            }
+            ws.send(JSON.stringify([{
+              type: 'init-received',
+              lastId: message.lastId,
+            }]))
             editor.setEditable(true)
             break
           case 'upserted':
-            console.log(`upsert ${message.node.syncId}`)
+            if (message.id) {
+              lastId = message.id
+            }
             // Update
             const nodeToUpdate = getNodeBySyncId(message.node.syncId)
             if (nodeToUpdate) {
@@ -215,7 +227,9 @@ export default function CollaborationPlugin() {
             }
             break
           case 'destroyed':
-            console.log(`destroy ${message.syncId}`)
+            if (message.id) {
+              lastId = message.id
+            }
             const nodeToDestroy = getNodeBySyncId(message.syncId)
             if (!nodeToDestroy) {
               console.error(`Destroy key not found: ${message.syncId}`)
