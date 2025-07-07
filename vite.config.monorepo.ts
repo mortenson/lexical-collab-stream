@@ -5,10 +5,10 @@
  * LICENSE file in the root directory of this source tree.
  *
  */
-import {mergeConfig} from 'vite';
+import { mergeConfig } from "vite";
 
-import lexicalMonorepoPlugin from '../../packages/shared/lexicalMonorepoPlugin';
-import config from './vite.config';
+import lexicalMonorepoPlugin from "../../packages/shared/lexicalMonorepoPlugin";
+import config from "./vite.config";
 
 export default mergeConfig(config, {
   plugins: [lexicalMonorepoPlugin()],

@@ -6,19 +6,19 @@
  *
  */
 
-import {useEffect, useState, type JSX} from 'react';
+import { useEffect, useState, type JSX } from "react";
 
-import {useLexicalComposerContext} from '@lexical/react/LexicalComposerContext';
-import {TreeView} from '@lexical/react/LexicalTreeView';
+import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
+import { TreeView } from "@lexical/react/LexicalTreeView";
 
 export default function TreeViewPlugin(): JSX.Element {
   const [editor] = useLexicalComposerContext();
-  const [json, setJson] = useState<string>()
+  const [json, setJson] = useState<string>();
   useEffect(() => {
     editor.registerUpdateListener(() => {
-      setJson(JSON.stringify(editor.toJSON(), null, 2))
-    })
-  }, [editor])
+      setJson(JSON.stringify(editor.toJSON(), null, 2));
+    });
+  }, [editor]);
   return (
     <>
       <pre>{json}</pre>

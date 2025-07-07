@@ -6,12 +6,15 @@
  *
  */
 
-import {AutoFocusPlugin} from '@lexical/react/LexicalAutoFocusPlugin';
-import {InitialConfigType, LexicalComposer} from '@lexical/react/LexicalComposer';
-import {ContentEditable} from '@lexical/react/LexicalContentEditable';
-import {LexicalErrorBoundary} from '@lexical/react/LexicalErrorBoundary';
-import {HistoryPlugin} from '@lexical/react/LexicalHistoryPlugin';
-import {RichTextPlugin} from '@lexical/react/LexicalRichTextPlugin';
+import { AutoFocusPlugin } from "@lexical/react/LexicalAutoFocusPlugin";
+import {
+  InitialConfigType,
+  LexicalComposer,
+} from "@lexical/react/LexicalComposer";
+import { ContentEditable } from "@lexical/react/LexicalContentEditable";
+import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
+import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
+import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
 import {
   $isTextNode,
   DOMConversionMap,
@@ -23,16 +26,21 @@ import {
   LexicalNode,
   ParagraphNode,
   TextNode,
-} from 'lexical';
+} from "lexical";
 
-import ExampleTheme from './ExampleTheme';
-import ToolbarPlugin from './plugins/ToolbarPlugin';
-import TreeViewPlugin from './plugins/TreeViewPlugin';
-import {parseAllowedColor, parseAllowedFontSize} from './styleConfig';
-import CollaborationPlugin from './plugins/CollaborationPlugin';
-import { $createSyncParagraphNode, $createSyncTextNode, SyncParagraphNode, SyncTextNode } from './Nodes';
+import ExampleTheme from "./ExampleTheme";
+import ToolbarPlugin from "./plugins/ToolbarPlugin";
+import TreeViewPlugin from "./plugins/TreeViewPlugin";
+import { parseAllowedColor, parseAllowedFontSize } from "./styleConfig";
+import CollaborationPlugin from "./plugins/CollaborationPlugin";
+import {
+  $createSyncParagraphNode,
+  $createSyncTextNode,
+  SyncParagraphNode,
+  SyncTextNode,
+} from "./Nodes";
 
-const placeholder = 'Enter some rich text...';
+const placeholder = "Enter some rich text...";
 
 const removeStylesExportDOM = (
   editor: LexicalEditor,
@@ -47,10 +55,10 @@ const removeStylesExportDOM = (
       output.element,
       ...output.element.querySelectorAll('[style],[class],[dir="ltr"]'),
     ]) {
-      el.removeAttribute('class');
-      el.removeAttribute('style');
-      if (el.getAttribute('dir') === 'ltr') {
-        el.removeAttribute('dir');
+      el.removeAttribute("class");
+      el.removeAttribute("style");
+      if (el.getAttribute("dir") === "ltr") {
+        el.removeAttribute("dir");
       }
     }
   }
@@ -68,17 +76,17 @@ const exportMap: DOMExportOutputMap = new Map<
 const getExtraStyles = (element: HTMLElement): string => {
   // Parse styles from pasted input, but only if they match exactly the
   // sort of styles that would be produced by exportDOM
-  let extraStyles = '';
+  let extraStyles = "";
   const fontSize = parseAllowedFontSize(element.style.fontSize);
   const backgroundColor = parseAllowedColor(element.style.backgroundColor);
   const color = parseAllowedColor(element.style.color);
-  if (fontSize !== '' && fontSize !== '15px') {
+  if (fontSize !== "" && fontSize !== "15px") {
     extraStyles += `font-size: ${fontSize};`;
   }
-  if (backgroundColor !== '' && backgroundColor !== 'rgb(255, 255, 255)') {
+  if (backgroundColor !== "" && backgroundColor !== "rgb(255, 255, 255)") {
     extraStyles += `background-color: ${backgroundColor};`;
   }
-  if (color !== '' && color !== 'rgb(0, 0, 0)') {
+  if (color !== "" && color !== "rgb(0, 0, 0)") {
     extraStyles += `color: ${color};`;
   }
   return extraStyles;
@@ -109,7 +117,7 @@ const constructImportMap = (): DOMConversionMap => {
           }
           const extraStyles = getExtraStyles(element);
           if (extraStyles) {
-            const {forChild} = output;
+            const { forChild } = output;
             return {
               ...output,
               forChild: (child, parent) => {
@@ -136,22 +144,22 @@ const editorConfig: InitialConfigType = {
     export: exportMap,
     import: constructImportMap(),
   },
-  namespace: 'React.js Demo',
+  namespace: "React.js Demo",
   nodes: [
-      SyncParagraphNode,
-      SyncTextNode,
-      {
-          replace: ParagraphNode,
-          // @todo: do I need to clone more properties ?
-          with: () => $createSyncParagraphNode(),
-          withKlass: SyncParagraphNode,
-      },
-      {
-          replace: TextNode,
-          // @todo: do I need to clone more properties ?
-          with: (node: TextNode) => $createSyncTextNode(node.__text),
-          withKlass: SyncTextNode,
-      }
+    SyncParagraphNode,
+    SyncTextNode,
+    {
+      replace: ParagraphNode,
+      // @todo: do I need to clone more properties ?
+      with: () => $createSyncParagraphNode(),
+      withKlass: SyncParagraphNode,
+    },
+    {
+      replace: TextNode,
+      // @todo: do I need to clone more properties ?
+      with: (node: TextNode) => $createSyncTextNode(node.__text),
+      withKlass: SyncTextNode,
+    },
   ],
   onError(error: Error) {
     throw error;

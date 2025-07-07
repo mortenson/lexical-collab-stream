@@ -17,9 +17,9 @@ export const parseAllowedFontSize = (input: string): string => {
       return input;
     }
   }
-  return '';
+  return "";
 };
 
 export function parseAllowedColor(input: string) {
-  return /^rgb\(\d+, \d+, \d+\)$/.test(input) ? input : '';
+  return /^rgb\(\d+, \d+, \d+\)$/.test(input) ? input : "";
 }

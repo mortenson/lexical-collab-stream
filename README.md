@@ -8,13 +8,13 @@ Here's how it works:
 1. The paragraph and text nodes are overridden and contain UUIDs in NodeState
 2. A mapping is (poorly?) maintained between UUIDs and NodeKeys
 3. A custom Node Transform is used to (try to) split TextNodes by word (more
-nodes == better sync, probably)
-4. Clients connect to a websocket server and receive the current EditorState 
+   nodes == better sync, probably)
+4. Clients connect to a websocket server and receive the current EditorState
 5. A mutation listener sends websocket messages that contain a serialized node
-and information required to upsert/destroy it
+   and information required to upsert/destroy it
 6. A websocket listener receives messages from other clients and upserts nodes
-from JSON, or destroys them. Node insertion is always relative to a sibling or
-parent.
+   from JSON, or destroys them. Node insertion is always relative to a sibling or
+   parent.
 
 ## Running locally
 
