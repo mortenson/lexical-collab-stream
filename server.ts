@@ -1,7 +1,7 @@
 import { WebSocketServer, WebSocket } from "ws";
 import Redis from "ioredis";
 import type { SerializedEditorState } from "lexical";
-import type { SyncMessage } from "./src/Messages";
+import type { SyncMessage } from "./src/Collab/Messages";
 
 // @todo: run real webserver and have this be in path, or put in every message
 // @todo: also put the lastId the client saw in a query param or something
@@ -11,10 +11,6 @@ console.log("Connecting to Redis...");
 const redis = new Redis();
 await redis.ping();
 console.log("Connected to Redis!");
-
-// Just easier to demo without state in redis for now
-redis.del(`streams:${defaultDocumentId}`);
-redis.del(`documents:${defaultDocumentId}`);
 
 const wss = new WebSocketServer({ port: 9045, host: "127.0.0.1" });
 

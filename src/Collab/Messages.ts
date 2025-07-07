@@ -33,8 +33,15 @@ interface InitReceivedMessage {
   lastId: string;
 }
 
+interface PersistDocumentMessage {
+  type: "persist-document";
+  lastId: string;
+  editorState: SerializedEditorState;
+}
+
 export type SyncMessage =
   | UpsertedMessage
   | DestroyedMessage
   | InitMessage
-  | InitReceivedMessage;
+  | InitReceivedMessage
+  | PersistDocumentMessage;

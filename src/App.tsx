@@ -32,13 +32,13 @@ import ExampleTheme from "./ExampleTheme";
 import ToolbarPlugin from "./plugins/ToolbarPlugin";
 import TreeViewPlugin from "./plugins/TreeViewPlugin";
 import { parseAllowedColor, parseAllowedFontSize } from "./styleConfig";
-import CollaborationPlugin from "./plugins/CollaborationPlugin";
+import CollaborationPlugin from "./Collab/CollaborationPlugin";
 import {
   $createSyncParagraphNode,
   $createSyncTextNode,
   SyncParagraphNode,
   SyncTextNode,
-} from "./Nodes";
+} from "./Collab/Nodes";
 
 const placeholder = "Enter some rich text...";
 
