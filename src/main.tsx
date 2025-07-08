@@ -15,7 +15,6 @@ import App from "./App.tsx";
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <div className="App">
-      <h1>Lexical Sync Demo</h1>
       <App />
     </div>
   </React.StrictMode>,

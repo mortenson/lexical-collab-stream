@@ -1,32 +1,36 @@
 {
-  "name": "mortenson/lexical-sync-demo",
+  "name": "@mortenson/lexical-sync-demo",
   "private": true,
-  "version": "0.33.0",
+  "version": "0.0.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "monorepo:dev": "vite -c vite.config.monorepo.ts",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "prettier": "prettier . --write"
+    "prettier": "prettier . --write",
+    "server": "tsx server.ts",
+    "server-wipe-db": "tsx server.ts --wipe"
   },
   "dependencies": {
+    "@lexical/react": "0.33.0",
     "@lexical/text": "^0.33.0",
     "@lexical/utils": "^0.33.0",
+    "@types/minimist": "^1.2.5",
     "@types/react": "^18.2.59",
     "@types/react-dom": "^18.2.19",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^4.2.1",
     "cross-env": "^7.0.3",
     "ioredis": "^5.6.1",
+    "lexical": "0.33.0",
+    "minimist": "^1.2.8",
     "prettier": "3.6.2",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "tsx": "^4.20.3",
     "typescript": "^5.2.2",
     "uuid": "^11.1.0",
     "vite": "^5.2.11",
-    "ws": "^8.18.3",
-    "@lexical/react": "0.33.0",
-    "lexical": "0.33.0",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "ws": "^8.18.3"
   }
 }

@@ -23,24 +23,25 @@ Here's how it works:
 
 ## Requirements
 
-- Node v22.6.0+ (to natively run typescript with type stripping, I'm too lazy to transpile)
 - Redis running locally on port 6379
 
 ## Running locally
 
 1. In one tab: `npm i && npm run dev`
-2. In another tab: `node server.ts`
+2. In another tab: `npm run server` (`npm run server-wipe-db` will wipe redis
+   if needed).
 
 ## Not implemented yet
 
-- Every node type `lexical-yjs` supports
+- Every node type `lexical-yjs` supports (note: I'm actually not sure the best
+  way to generically support all node types)
 - Accurate server reconciliation (there's no guarantee all clients have the
   same EditorState, we could have an explicit reconciliation cycle or something
   like rollback+reapply per the blog linked above)
-- Re-connecting
 - Message compression (clients or the server could collapse chains of
   messages like `upsert 1 -> upsert 1 -> delete 1` to `delete 1`)
-- Aawareness
+- Awareness
+- Undo/redo
 
 ## Not planning to implement
 
@@ -62,6 +63,13 @@ Probably 60% for fun, 40% because of some things I dislike about Yjs:
   but if I have to figure out horizontal scaling and websockets anyway may as
   well go DIY)
 - Due to WebRTC being broken, the distributed promises kind of fall apart
+
+## Other thoughts
+
+- It'd be nice if we synced transforms, not mutations, but the word splitting
+  might make this less necessary.
+- Lexical doesn't really expose the purpose of clone, so it's hard to tell when
+  new UUIDs need to be generated (ex: text split/paste vs. just typing)
 
 ## Credit
 

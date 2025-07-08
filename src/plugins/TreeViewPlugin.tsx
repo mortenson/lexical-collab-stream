@@ -6,22 +6,16 @@
  *
  */
 
-import { useEffect, useState, type JSX } from "react";
+import { type JSX } from "react";
 
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { TreeView } from "@lexical/react/LexicalTreeView";
 
 export default function TreeViewPlugin(): JSX.Element {
   const [editor] = useLexicalComposerContext();
-  const [json, setJson] = useState<string>();
-  useEffect(() => {
-    editor.registerUpdateListener(() => {
-      setJson(JSON.stringify(editor.toJSON(), null, 2));
-    });
-  }, [editor]);
   return (
     <>
-      <pre>{json}</pre>
+      {/* @todo: time travel severely fucks with collab for some reason */}
       <TreeView
         viewClassName="tree-view-output"
         treeTypeButtonClassName="debug-treetype-button"

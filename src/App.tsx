@@ -115,20 +115,20 @@ const constructImportMap = (): DOMConversionMap => {
           ) {
             return output;
           }
-          const extraStyles = getExtraStyles(element);
-          if (extraStyles) {
-            const { forChild } = output;
-            return {
-              ...output,
-              forChild: (child, parent) => {
-                const textNode = forChild(child, parent);
-                if ($isTextNode(textNode)) {
-                  textNode.setStyle(textNode.getStyle() + extraStyles);
-                }
-                return textNode;
-              },
-            };
-          }
+          // const extraStyles = getExtraStyles(element);
+          // if (extraStyles) {
+          //   const { forChild } = output;
+          //   return {
+          //     ...output,
+          //     forChild: (child, parent) => {
+          //       const textNode = forChild(child, parent);
+          //       if ($isTextNode(textNode)) {
+          //         textNode.setStyle(textNode.getStyle() + extraStyles);
+          //       }
+          //       return textNode;
+          //     },
+          //   };
+          // }
           return output;
         },
       };
@@ -140,6 +140,7 @@ const constructImportMap = (): DOMConversionMap => {
 
 const editorConfig: InitialConfigType = {
   editorState: null,
+  editable: false,
   html: {
     export: exportMap,
     import: constructImportMap(),

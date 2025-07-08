@@ -61,7 +61,7 @@ h1 {
   border-radius: 2px;
   max-width: 600px;
   color: #000;
-  position: relative;
+  /* position: relative; */
   line-height: 20px;
   font-weight: 400;
   text-align: left;
@@ -451,4 +451,9 @@ i.right-align {
 
 i.justify-align {
   background-image: url(icons/justify.svg);
+}
+
+/* @todo: time travel severely fucks with collab for some reason */
+.debug-timetravel-button {
+  display: none;
 }

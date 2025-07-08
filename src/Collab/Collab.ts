@@ -5,12 +5,16 @@ import {
   $getState,
   $isElementNode,
   $isRangeSelection,
+  $onUpdate,
+  $setState,
   EditorState,
   LexicalEditor,
   LexicalNode,
   NodeKey,
   NodeMutation,
+  PASTE_TAG,
 } from "lexical";
+import { v7 as uuidv7 } from "uuid";
 import {
   $createSyncParagraphNode,
   $createSyncTextNode,
@@ -23,14 +27,19 @@ import {
   SyncTextNode,
 } from "./Nodes";
 import { $dfs } from "@lexical/utils";
-import { SerializedSyncNode, SyncMessage } from "./Messages";
+import {
+  isSyncMessageServer,
+  SerializedSyncNode,
+  SyncMessage,
+  SyncMessageClient,
+} from "./Messages";
 
 export const SYNC_TAG = "SYNC_TAG";
 export const CLOSE_INTENTIONAL_CODE = 3001;
 
 // Splits TextNodes every time the user types a space.
 // This allows users to edit one paragraph without (as many) conflicts.
-export const wordSplitTransform = (node: SyncTextNode): void => {
+const wordSplitTransform = (node: SyncTextNode): void => {
   const text = node.getTextContent();
   if (text.length <= 1) {
     return;
@@ -52,33 +61,38 @@ export const wordSplitTransform = (node: SyncTextNode): void => {
   node.splitText(spaceIndex);
 };
 
+const compareRedisStreamIds = (a: string, b: string): number => {
+  return parseInt(a.split("-")[0]) - parseInt(b.split("-")[0]);
+};
+
 export class CollabInstance {
   syncIdToNodeKey: Map<string, NodeKey>;
   nodeKeyToSyncId: Map<NodeKey, string>;
-  mapsInitialized: boolean;
   editor: LexicalEditor;
   ws?: WebSocket;
   removeListenerCallbacks: (() => void)[];
   reconnectInterval?: NodeJS.Timeout;
+  persistInterval?: NodeJS.Timeout;
+  cursorInterval?: NodeJS.Timeout;
 
   userId: string;
 
   lastId?: string;
 
-  messageStack: SyncMessage[];
+  messageStack: SyncMessageClient[];
 
   constructor(userId: string, editor: LexicalEditor) {
     this.editor = editor;
     this.userId = userId;
     this.syncIdToNodeKey = new Map();
     this.nodeKeyToSyncId = new Map();
-    this.mapsInitialized = false;
     this.messageStack = [];
     this.removeListenerCallbacks = [];
   }
 
   start() {
     clearInterval(this.reconnectInterval);
+    clearInterval(this.persistInterval);
     if (this.ws) {
       this.ws.close();
     }
@@ -95,7 +109,7 @@ export class CollabInstance {
     ];
     this.ws = new WebSocket("ws://127.0.0.1:9045");
     this.ws.addEventListener("error", (error) => {
-      console.log(error);
+      console.error(error);
       this.ws?.close();
     });
     this.ws.addEventListener("open", () => this.flushStack());
@@ -107,14 +121,60 @@ export class CollabInstance {
         this.start();
       }
     }, 1000);
+
+    this.persistInterval = setInterval(() => {
+      if (this.ws && this.ws.readyState === this.ws.OPEN && this.lastId) {
+        this.send([
+          {
+            type: "persist-document",
+            lastId: this.lastId,
+            editorState: this.editor.getEditorState().toJSON(),
+          },
+        ]);
+      }
+    }, 1000);
+
+    this.cursorInterval = setInterval(() => {
+      if (this.ws && this.ws.readyState === this.ws.OPEN) {
+        this.editor.read(() => {
+          const selection = $getSelection();
+          if ($isRangeSelection(selection)) {
+            const element = this.editor.getElementByKey(selection.anchor.key);
+            if (
+              !element ||
+              !element.firstChild ||
+              element.firstChild.nodeType !== element.firstChild.TEXT_NODE
+            ) {
+              return;
+            }
+            const range = document.createRange();
+            range.setStart(element.firstChild, selection.anchor.offset);
+            const clientRect = range.getBoundingClientRect();
+            const highlight = document.getElementById("highlight");
+            if (!highlight) {
+              return;
+            }
+            highlight.style.left = `${clientRect.x}px`;
+            highlight.style.top = `${clientRect.y}px`;
+            // highlight.style.width = `${clientRect.width}px`;
+            highlight.style.height = `${clientRect.height}px`;
+          }
+        });
+      }
+    }, 100);
   }
 
   stop() {
     clearInterval(this.reconnectInterval);
+    clearInterval(this.persistInterval);
     if (this.ws) {
       this.ws.close();
     }
     this.removeListenerCallbacks.forEach((f) => f());
+  }
+
+  send(messages: SyncMessageClient[]): void {
+    this.ws?.send(JSON.stringify(messages));
   }
 
   mapSyncIdToNodeKey(syncId: string, nodeKey: NodeKey) {
@@ -138,8 +198,8 @@ export class CollabInstance {
     }
   }
 
-  getNodeBySyncId(syncId: string): LexicalNode | undefined {
-    if (!this.mapsInitialized) {
+  populateSyncIdMap() {
+    this.editor.read(() => {
       $dfs().forEach((dfsNode) => {
         if (dfsNode.node.getKey() === "root") {
           return;
@@ -149,8 +209,10 @@ export class CollabInstance {
           dfsNode.node.getKey(),
         );
       });
-      this.mapsInitialized = true;
-    }
+    });
+  }
+
+  getNodeBySyncId(syncId: string): LexicalNode | undefined {
     const nodeKey = this.syncIdToNodeKey.get(syncId);
     if (!nodeKey) {
       return;
@@ -166,7 +228,7 @@ export class CollabInstance {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       return;
     }
-    this.ws.send(JSON.stringify(this.messageStack));
+    this.send(this.messageStack);
     this.messageStack = [];
   }
 
@@ -182,6 +244,35 @@ export class CollabInstance {
   ) {
     if (updateTags.has(SYNC_TAG)) {
       return;
+    }
+    // @todo file issue with lexical to make some kind of "forreal clone"
+    // concept so that we can generate new UUIDs when a command/plugin is
+    // actually trying to make a real clone with a new NodeKey
+    if (updateTags.has(PASTE_TAG)) {
+      this.editor.update(() => {
+        nodes.forEach((mutation, nodeKey) => {
+          switch (mutation) {
+            case "created":
+              const node = $getNodeByKey(nodeKey);
+              if (!node) {
+                console.error(`Node not found ${nodeKey}`);
+                return;
+              }
+              const syncId = $getState(node, syncIdState);
+              if (syncId === SYNC_ID_UNSET) {
+                console.error(`Node does not have sync ID ${nodeKey}`);
+                return;
+              }
+              // The pasted node is already mapped, give it a new UUID.
+              // @todo: This might be evidence that all UUIDs should be
+              // assigned in the mutation listener, not the Node class.
+              if (this.getNodeBySyncId(syncId)) {
+                $setState(node, syncIdState, uuidv7());
+              }
+              break;
+          }
+        });
+      });
     }
     this.editor.read(() => {
       nodes.forEach((mutation, nodeKey) => {
@@ -235,9 +326,27 @@ export class CollabInstance {
     this.editor.update(
       () => {
         const message: SyncMessage = JSON.parse(wsMessage.data);
-        // Ignore own messages.
-        if ("userId" in message && message.userId === this.userId) {
+        if (!isSyncMessageServer(message)) {
+          console.error(
+            `Non-server message sent from server: ${wsMessage.data}`,
+          );
           return;
+        }
+        if ("userId" in message) {
+          // Ignore and log when incoming redis ID is in the past.
+          if (
+            this.lastId &&
+            message.id &&
+            compareRedisStreamIds(this.lastId, message.id) > 0
+          ) {
+            console.error(`Out of order message detected: ${wsMessage.data}`);
+            return;
+          }
+          // Ignore own messages for sanity's sake.
+          else if (message.userId === this.userId) {
+            this.lastId = message.id;
+            return;
+          }
         }
         switch (message.type) {
           case "init":
@@ -246,17 +355,18 @@ export class CollabInstance {
               message.editorState,
             );
             if (!editorState.isEmpty()) {
-              this.editor.setEditorState(editorState);
+              this.editor.setEditorState(editorState, {
+                tag: SYNC_TAG,
+              });
             }
-            this.ws?.send(
-              JSON.stringify([
-                {
-                  type: "init-received",
-                  lastId: message.lastId,
-                },
-              ]),
-            );
+            this.send([
+              {
+                type: "init-received",
+                lastId: message.lastId,
+              },
+            ]);
             this.editor.setEditable(true);
+            $onUpdate(() => this.populateSyncIdMap());
             break;
           case "upserted":
             if (message.id) {

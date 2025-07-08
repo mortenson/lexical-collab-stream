@@ -39,9 +39,41 @@ interface PersistDocumentMessage {
   editorState: SerializedEditorState;
 }
 
-export type SyncMessage =
-  | UpsertedMessage
-  | DestroyedMessage
-  | InitMessage
+// Messages the server should expect peers to send/broadcast
+export type SyncMessagePeer = UpsertedMessage | DestroyedMessage;
+
+export const isSyncMessagePeer = (
+  message: SyncMessage,
+): message is SyncMessagePeer => {
+  return message.type === "upserted" || message.type === "destroyed";
+};
+
+// Messages clients expect the server to send
+export type SyncMessageServer = InitMessage | SyncMessagePeer;
+
+export const isSyncMessageServer = (
+  message: SyncMessage,
+): message is SyncMessageServer => {
+  return isSyncMessagePeer(message) || message.type === "init";
+};
+
+// Messages the server expects from clients
+export type SyncMessageClient =
   | InitReceivedMessage
-  | PersistDocumentMessage;
+  | PersistDocumentMessage
+  | SyncMessagePeer;
+
+export const isSyncMessageClient = (
+  message: SyncMessage,
+): message is SyncMessagePeer => {
+  return (
+    isSyncMessagePeer(message) ||
+    message.type === "init-received" ||
+    message.type === "persist-document"
+  );
+};
+
+export type SyncMessage =
+  | SyncMessageServer
+  | SyncMessagePeer
+  | SyncMessageClient;
