@@ -18,7 +18,6 @@ export default function CollaborationPlugin() {
     <>
       {cursors &&
         Array.from(cursors.entries()).map(([userId, cursor]) => {
-          console.log(userId, cursor);
           return <CursorElement userId={userId} cursor={cursor} key={userId} />;
         })}
     </>

@@ -53,7 +53,7 @@ interface PersistDocumentMessage {
 
 interface CursorMessage {
   type: "cursor";
-  lastActivity: string; // ISO 8601
+  lastActivity: number; // Date.now()
   userId: string;
   anchorId: string;
   anchorOffset: number;

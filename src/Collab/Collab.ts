@@ -27,10 +27,12 @@ import {
   SyncMessageClient,
 } from "./Messages";
 
-export const SYNC_TAG = "SYNC_TAG";
-export const CLOSE_INTENTIONAL_CODE = 3001;
+const SYNC_TAG = "SYNC_TAG";
+
+const CURSOR_INACTIVITY_LIMIT = 10 // seconds
 
 export type CollabCursor = {
+  lastActivity: number
   anchorElement: HTMLElement;
   anchorOffset: number;
   focusElement: HTMLElement;
@@ -178,6 +180,7 @@ export class CollabInstance {
             if (anchorSyncId && focusSyncId) {
               const message: SyncMessage = {
                 type: "cursor",
+                lastActivity: Date.now(),
                 userId: this.userId,
                 anchorId: anchorSyncId,
                 anchorOffset: selection.anchor.offset,
@@ -186,8 +189,8 @@ export class CollabInstance {
               };
               if (
                 this.lastCursorMessage &&
-                JSON.stringify(message) ===
-                  JSON.stringify(this.lastCursorMessage)
+                JSON.stringify(message, (key, value) => key === 'lastActivity' ? 0 : value) ===
+                  JSON.stringify(this.lastCursorMessage, (key, value) => key === 'lastActivity' ? 0 : value)
               ) {
                 return;
               }
@@ -196,6 +199,16 @@ export class CollabInstance {
             }
           }
         });
+      }
+      let cursorsChanged = false
+      this.cursors.forEach((cursor, userId) => {
+        if (cursor.lastActivity < Date.now() - (1000 * CURSOR_INACTIVITY_LIMIT)) {
+          this.cursors.delete(userId)
+          cursorsChanged = true
+        }
+      })
+      if (cursorsChanged) {
+        this.onCursorsChange(this.cursors)
       }
     }, 100);
   }
@@ -274,6 +287,7 @@ export class CollabInstance {
     anchorOffset: number,
     focusId: string,
     focusOffset: number,
+    lastActivity: number,
   ) {
     const anchorKey = this.getNodeBySyncId(anchorId)?.getKey();
     const focusKey = this.getNodeBySyncId(focusId)?.getKey();
@@ -282,10 +296,11 @@ export class CollabInstance {
     }
     const anchorElement = this.editor.getElementByKey(anchorKey);
     const focusElement = this.editor.getElementByKey(focusKey);
-    if (!anchorElement || !focusElement) {
+    if (!anchorElement || !focusElement || lastActivity < Date.now() - (1000 * CURSOR_INACTIVITY_LIMIT)) {
       this.cursors.delete(userId);
     } else {
       this.cursors.set(userId, {
+        lastActivity,
         anchorElement,
         focusElement,
         anchorOffset,
@@ -535,6 +550,7 @@ export class CollabInstance {
               message.anchorOffset,
               message.focusId,
               message.focusOffset,
+              message.lastActivity,
             );
             break;
           default:
