@@ -30,6 +30,15 @@ import {
 export const SYNC_TAG = "SYNC_TAG";
 export const CLOSE_INTENTIONAL_CODE = 3001;
 
+export type CollabCursor = {
+  anchorElement: HTMLElement;
+  anchorOffset: number;
+  focusElement: HTMLElement;
+  focusOffset: number;
+};
+
+type CursorListener = (cursors: Map<string, CollabCursor>) => void;
+
 // Splits TextNodes every time the user types a space.
 // This allows users to edit one paragraph without (as many) conflicts.
 const wordSplitTransform = (node: TextNode): void => {
@@ -87,20 +96,27 @@ export class CollabInstance {
   reconnectInterval?: NodeJS.Timeout;
   persistInterval?: NodeJS.Timeout;
   cursorInterval?: NodeJS.Timeout;
-
   userId: string;
-
   lastId?: string;
-
+  lastPersistedId?: string;
   messageStack: SyncMessageClient[];
+  onCursorsChange: CursorListener;
+  cursors: Map<string, CollabCursor>;
+  lastCursorMessage?: SyncMessageClient;
 
-  constructor(userId: string, editor: LexicalEditor) {
+  constructor(
+    userId: string,
+    editor: LexicalEditor,
+    onCursorsChange: CursorListener,
+  ) {
     this.editor = editor;
     this.userId = userId;
     this.syncIdToNodeKey = new Map();
     this.nodeKeyToSyncId = new Map();
     this.messageStack = [];
     this.removeListenerCallbacks = [];
+    this.cursors = new Map();
+    this.onCursorsChange = onCursorsChange;
   }
 
   start() {
@@ -138,6 +154,10 @@ export class CollabInstance {
 
     this.persistInterval = setInterval(() => {
       if (this.ws && this.ws.readyState === this.ws.OPEN && this.lastId) {
+        if (this.lastPersistedId && this.lastId === this.lastPersistedId) {
+          return;
+        }
+        this.lastPersistedId = this.lastId;
         this.send([
           {
             type: "persist-document",
@@ -153,25 +173,27 @@ export class CollabInstance {
         this.editor.read(() => {
           const selection = $getSelection();
           if ($isRangeSelection(selection)) {
-            const element = this.editor.getElementByKey(selection.anchor.key);
-            if (
-              !element ||
-              !element.firstChild ||
-              element.firstChild.nodeType !== element.firstChild.TEXT_NODE
-            ) {
-              return;
+            const anchorSyncId = getNodeSyncId(selection.anchor.getNode());
+            const focusSyncId = getNodeSyncId(selection.focus.getNode());
+            if (anchorSyncId && focusSyncId) {
+              const message: SyncMessage = {
+                type: "cursor",
+                userId: this.userId,
+                anchorId: anchorSyncId,
+                anchorOffset: selection.anchor.offset,
+                focusId: focusSyncId,
+                focusOffset: selection.focus.offset,
+              };
+              if (
+                this.lastCursorMessage &&
+                JSON.stringify(message) ===
+                  JSON.stringify(this.lastCursorMessage)
+              ) {
+                return;
+              }
+              this.lastCursorMessage = message;
+              this.send([message]);
             }
-            const range = document.createRange();
-            range.setStart(element.firstChild, selection.anchor.offset);
-            const clientRect = range.getBoundingClientRect();
-            const highlight = document.getElementById("highlight");
-            if (!highlight) {
-              return;
-            }
-            highlight.style.left = `${clientRect.x}px`;
-            highlight.style.top = `${clientRect.y}px`;
-            // highlight.style.width = `${clientRect.width}px`;
-            highlight.style.height = `${clientRect.height}px`;
           }
         });
       }
@@ -244,6 +266,33 @@ export class CollabInstance {
     }
     this.send(this.messageStack);
     this.messageStack = [];
+  }
+
+  updateCursor(
+    userId: string,
+    anchorId: string,
+    anchorOffset: number,
+    focusId: string,
+    focusOffset: number,
+  ) {
+    const anchorKey = this.getNodeBySyncId(anchorId)?.getKey();
+    const focusKey = this.getNodeBySyncId(focusId)?.getKey();
+    if (!anchorKey || !focusKey) {
+      return;
+    }
+    const anchorElement = this.editor.getElementByKey(anchorKey);
+    const focusElement = this.editor.getElementByKey(focusKey);
+    if (!anchorElement || !focusElement) {
+      this.cursors.delete(userId);
+    } else {
+      this.cursors.set(userId, {
+        anchorElement,
+        focusElement,
+        anchorOffset,
+        focusOffset,
+      });
+    }
+    this.onCursorsChange(this.cursors);
   }
 
   onMutation(
@@ -346,8 +395,8 @@ export class CollabInstance {
           );
           return;
         }
-        if ("userId" in message) {
-          // Ignore and log when incoming redis ID is in the past.
+        // Ignore and log when incoming redis ID is in the past.
+        if ("id" in message) {
           if (
             this.lastId &&
             message.id &&
@@ -356,11 +405,13 @@ export class CollabInstance {
             console.error(`Out of order message detected: ${wsMessage.data}`);
             return;
           }
-          // Ignore own messages for sanity's sake.
-          else if (message.userId === this.userId) {
+        }
+        // Ignore messages (probably) sent by us.
+        if ("userId" in message && message.userId === this.userId) {
+          if ("id" in message) {
             this.lastId = message.id;
-            return;
           }
+          return;
         }
         switch (message.type) {
           case "init":
@@ -376,6 +427,7 @@ export class CollabInstance {
             this.send([
               {
                 type: "init-received",
+                userId: this.userId,
                 lastId: message.lastId,
               },
             ]);
@@ -400,8 +452,8 @@ export class CollabInstance {
             let messageNode: LexicalNode;
             switch (message.node.type) {
               case "paragraph":
-                // @ts-ignore
                 messageNode = $createParagraphNode().updateFromJSON(
+                  // @ts-ignore
                   message.node,
                 );
                 break;
@@ -454,7 +506,7 @@ export class CollabInstance {
                 messageNode.getKey(),
               );
             } else {
-              if (messageNode.getType() === "sync-text") {
+              if (messageNode.getType() === "text") {
                 console.error("text nodes cannot be appended to root");
                 return;
               }
@@ -475,6 +527,15 @@ export class CollabInstance {
               return;
             }
             nodeToDestroy.remove(true);
+            break;
+          case "cursor":
+            this.updateCursor(
+              message.userId,
+              message.anchorId,
+              message.anchorOffset,
+              message.focusId,
+              message.focusOffset,
+            );
             break;
           default:
             console.error(`Unknown message type: ${wsMessage.data}`);

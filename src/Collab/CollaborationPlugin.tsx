@@ -1,29 +1,82 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { CollabInstance } from "./Collab";
+import { CollabCursor, CollabInstance } from "./Collab";
 
 export default function CollaborationPlugin() {
   const [editor] = useLexicalComposerContext();
-  const [cursors, setCursors] = useState();
+  const [cursors, setCursors] = useState<Map<string, CollabCursor>>();
   useEffect(() => {
     editor.setEditable(false);
     const userId = "user_" + Math.floor(Math.random() * 100);
-    const collab = new CollabInstance(userId, editor);
+    const collab = new CollabInstance(userId, editor, (cursors) => {
+      setCursors(new Map(cursors));
+    });
     collab.start();
     return () => collab.stop();
   }, [editor]);
   return (
     <>
-      <div
-        id="highlight"
-        style={{
-          width: "2px",
-          background: "blue",
-          opacity: 0.2,
-          zIndex: 999,
-          position: "absolute",
-        }}
-      ></div>
+      {cursors &&
+        Array.from(cursors.entries()).map(([userId, cursor]) => {
+          console.log(userId, cursor);
+          return <CursorElement userId={userId} cursor={cursor} key={userId} />;
+        })}
     </>
   );
 }
+
+type CursorElementProps = {
+  userId: string;
+  cursor: CollabCursor;
+};
+
+const CursorElement = ({ userId, cursor }: CursorElementProps) => {
+  const rect: DOMRect | void = useMemo(() => {
+    if (
+      !cursor.anchorElement.firstChild ||
+      cursor.anchorElement.firstChild.nodeType !==
+        cursor.anchorElement.firstChild.TEXT_NODE
+    ) {
+      return;
+    }
+    if (
+      !cursor.focusElement.firstChild ||
+      cursor.focusElement.firstChild.nodeType !==
+        cursor.focusElement.firstChild.TEXT_NODE
+    ) {
+      return;
+    }
+    const range = document.createRange();
+    if (
+      cursor.anchorElement.compareDocumentPosition(cursor.focusElement) === 2
+    ) {
+      range.setEnd(cursor.anchorElement.firstChild, cursor.anchorOffset);
+      range.setStart(cursor.focusElement.firstChild, cursor.focusOffset);
+    } else {
+      range.setStart(cursor.anchorElement.firstChild, cursor.anchorOffset);
+      range.setEnd(cursor.focusElement.firstChild, cursor.focusOffset);
+    }
+    return range.getBoundingClientRect();
+  }, [cursor]);
+  if (!rect) {
+    return <></>;
+  }
+  return (
+    <div
+      className="collab-cursor"
+      style={{
+        left: `${rect.x + window.scrollX}px`,
+        top: `${rect.y + window.scrollY}px`,
+        width: `${rect.width > 2 ? rect.width : 2}px`,
+        height: `${rect.height}px`,
+      }}
+    >
+      <div
+        className="collab-cursor-user"
+        style={{ top: `${-1 * rect.height - 2}px` }}
+      >
+        {userId}
+      </div>
+    </div>
+  );
+};

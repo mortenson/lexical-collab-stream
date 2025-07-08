@@ -8,7 +8,7 @@ websockets and broadcast to all listeners
 
 Here's how it works:
 
-1. The paragraph and text nodes are overridden and contain UUIDs in NodeState
+1. Ensure that every node has a (unique) UUID by watching for create mutations.
 2. A mapping is (poorly?) maintained between UUIDs and NodeKeys
 3. A custom Node Transform is used to (try to) split TextNodes by word (more
    nodes == better sync, probably)
@@ -40,7 +40,6 @@ Here's how it works:
   like rollback+reapply per the blog linked above)
 - Message compression (clients or the server could collapse chains of
   messages like `upsert 1 -> upsert 1 -> delete 1` to `delete 1`)
-- Awareness
 - Undo/redo
 
 ## Not planning to implement

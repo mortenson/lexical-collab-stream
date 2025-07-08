@@ -457,3 +457,20 @@ i.justify-align {
 .debug-timetravel-button {
   display: none;
 }
+
+.collab-cursor {
+  position: absolute;
+  z-index: 999;
+  pointer-events: none;
+  background: rgba(93, 255, 59, 0.25);
+}
+
+.collab-cursor-user {
+  position: absolute;
+  color: black;
+  padding: 2px 4px;
+  border-top-left-radius: 10px;
+  border-top-right-radius: 10px;
+  background: #d6ffce;
+  font-size: 12px;
+}

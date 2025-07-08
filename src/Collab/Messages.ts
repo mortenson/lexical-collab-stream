@@ -41,6 +41,7 @@ interface InitMessage {
 
 interface InitReceivedMessage {
   type: "init-received";
+  userId: string;
   lastId: string;
 }
 
@@ -50,13 +51,30 @@ interface PersistDocumentMessage {
   editorState: SerializedEditorState;
 }
 
+interface CursorMessage {
+  type: "cursor";
+  lastActivity: string; // ISO 8601
+  userId: string;
+  anchorId: string;
+  anchorOffset: number;
+  focusId: string;
+  focusOffset: number;
+}
+
 // Messages the server should expect peers to send/broadcast
-export type SyncMessagePeer = UpsertedMessage | DestroyedMessage;
+export type SyncMessagePeer =
+  | UpsertedMessage
+  | DestroyedMessage
+  | CursorMessage;
 
 export const isSyncMessagePeer = (
   message: SyncMessage,
 ): message is SyncMessagePeer => {
-  return message.type === "upserted" || message.type === "destroyed";
+  return (
+    message.type === "upserted" ||
+    message.type === "destroyed" ||
+    message.type === "cursor"
+  );
 };
 
 // Messages clients expect the server to send

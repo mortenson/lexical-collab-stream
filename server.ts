@@ -93,7 +93,9 @@ const readStreamChunk = async (
       console.error(`Redis contains non-peer message: ${messageRaw[1]}`);
       return;
     }
-    message.id = id;
+    if (message.type != "cursor") {
+      message.id = id;
+    }
     messages.push(message);
   });
 
