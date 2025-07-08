@@ -16,7 +16,6 @@ import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
 import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
 import {
-  $isTextNode,
   DOMConversionMap,
   DOMExportOutput,
   DOMExportOutputMap,
@@ -33,12 +32,6 @@ import ToolbarPlugin from "./plugins/ToolbarPlugin";
 import TreeViewPlugin from "./plugins/TreeViewPlugin";
 import { parseAllowedColor, parseAllowedFontSize } from "./styleConfig";
 import CollaborationPlugin from "./Collab/CollaborationPlugin";
-import {
-  $createSyncParagraphNode,
-  $createSyncTextNode,
-  SyncParagraphNode,
-  SyncTextNode,
-} from "./Collab/Nodes";
 
 const placeholder = "Enter some rich text...";
 
@@ -69,8 +62,8 @@ const exportMap: DOMExportOutputMap = new Map<
   Klass<LexicalNode>,
   (editor: LexicalEditor, target: LexicalNode) => DOMExportOutput
 >([
-  [SyncParagraphNode, removeStylesExportDOM],
-  [SyncTextNode, removeStylesExportDOM],
+  [ParagraphNode, removeStylesExportDOM],
+  [TextNode, removeStylesExportDOM],
 ]);
 
 const getExtraStyles = (element: HTMLElement): string => {
@@ -146,22 +139,6 @@ const editorConfig: InitialConfigType = {
     import: constructImportMap(),
   },
   namespace: "React.js Demo",
-  nodes: [
-    SyncParagraphNode,
-    SyncTextNode,
-    {
-      replace: ParagraphNode,
-      // @todo: do I need to clone more properties ?
-      with: () => $createSyncParagraphNode(),
-      withKlass: SyncParagraphNode,
-    },
-    {
-      replace: TextNode,
-      // @todo: do I need to clone more properties ?
-      with: (node: TextNode) => $createSyncTextNode(node.__text),
-      withKlass: SyncTextNode,
-    },
-  ],
   onError(error: Error) {
     throw error;
   },

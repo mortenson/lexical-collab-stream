@@ -1,15 +1,26 @@
-import { SerializedEditorState } from "lexical";
-import { SerializedSyncParagraphNode, SerializedSyncTextNode } from "./Nodes";
+import {
+  NODE_STATE_KEY,
+  SerializedEditorState,
+  SerializedLexicalNode,
+} from "lexical";
 
-export type SerializedSyncNode =
-  | SerializedSyncTextNode
-  | SerializedSyncParagraphNode;
+interface SerializedSyncNode extends SerializedLexicalNode {
+  [NODE_STATE_KEY]: {
+    syncId: string;
+  };
+}
+
+export const isSerializedSyncNode = (
+  node: SerializedLexicalNode,
+): node is SerializedSyncNode => {
+  return node.$ !== undefined && "syncId" in node.$;
+};
 
 interface UpsertedMessage {
   id?: string;
   type: "upserted";
   userId: string;
-  node: SerializedSyncNode;
+  node: SerializedLexicalNode;
   previousId?: string;
   nextId?: string;
   parentId?: string;

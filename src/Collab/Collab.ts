@@ -1,4 +1,6 @@
 import {
+  $createParagraphNode,
+  $createTextNode,
   $getNodeByKey,
   $getRoot,
   $getSelection,
@@ -7,29 +9,20 @@ import {
   $isRangeSelection,
   $onUpdate,
   $setState,
+  createState,
   EditorState,
   LexicalEditor,
   LexicalNode,
   NodeKey,
   NodeMutation,
-  PASTE_TAG,
+  ParagraphNode,
+  TextNode,
 } from "lexical";
 import { v7 as uuidv7 } from "uuid";
-import {
-  $createSyncParagraphNode,
-  $createSyncTextNode,
-  getNodeSyncId,
-  SerializedSyncParagraphNode,
-  SerializedSyncTextNode,
-  SYNC_ID_UNSET,
-  syncIdState,
-  SyncParagraphNode,
-  SyncTextNode,
-} from "./Nodes";
 import { $dfs } from "@lexical/utils";
 import {
+  isSerializedSyncNode,
   isSyncMessageServer,
-  SerializedSyncNode,
   SyncMessage,
   SyncMessageClient,
 } from "./Messages";
@@ -39,7 +32,7 @@ export const CLOSE_INTENTIONAL_CODE = 3001;
 
 // Splits TextNodes every time the user types a space.
 // This allows users to edit one paragraph without (as many) conflicts.
-const wordSplitTransform = (node: SyncTextNode): void => {
+const wordSplitTransform = (node: TextNode): void => {
   const text = node.getTextContent();
   if (text.length <= 1) {
     return;
@@ -58,11 +51,31 @@ const wordSplitTransform = (node: SyncTextNode): void => {
   if (spaceIndex === -1) {
     return;
   }
-  node.splitText(spaceIndex);
+  // Feels like this shouldn't be needed but I think us updating immidiately
+  // on duplicate keys in onMutation is messing up the selection pretty bad.
+  const nodes = node.splitText(spaceIndex);
+  nodes.shift();
+  nodes.forEach((node) => {
+    $setState(node, syncIdState, uuidv7());
+  });
 };
 
 const compareRedisStreamIds = (a: string, b: string): number => {
   return parseInt(a.split("-")[0]) - parseInt(b.split("-")[0]);
+};
+
+const SYNC_ID_UNSET = "SYNC_ID_UNSET";
+
+const syncIdState = createState("syncId", {
+  parse: (v) => (typeof v === "string" ? v : SYNC_ID_UNSET),
+});
+
+const getNodeSyncId = (node: LexicalNode): string | undefined => {
+  const syncId = $getState(node, syncIdState);
+  if (syncId === SYNC_ID_UNSET) {
+    return;
+  }
+  return syncId;
 };
 
 export class CollabInstance {
@@ -97,15 +110,16 @@ export class CollabInstance {
       this.ws.close();
     }
     this.removeListenerCallbacks = [
+      // @todo Feels like we could generically support every element type?
       this.editor.registerMutationListener(
-        SyncParagraphNode,
+        ParagraphNode,
         this.onMutation.bind(this),
       ),
       this.editor.registerMutationListener(
-        SyncTextNode,
+        TextNode,
         this.onMutation.bind(this),
       ),
-      this.editor.registerNodeTransform(SyncTextNode, wordSplitTransform),
+      this.editor.registerNodeTransform(TextNode, wordSplitTransform),
     ];
     this.ws = new WebSocket("ws://127.0.0.1:9045");
     this.ws.addEventListener("error", (error) => {
@@ -245,11 +259,9 @@ export class CollabInstance {
     if (updateTags.has(SYNC_TAG)) {
       return;
     }
-    // @todo file issue with lexical to make some kind of "forreal clone"
-    // concept so that we can generate new UUIDs when a command/plugin is
-    // actually trying to make a real clone with a new NodeKey
-    if (updateTags.has(PASTE_TAG)) {
-      this.editor.update(() => {
+    // Ensure every node has a (unique) UUID
+    this.editor.update(
+      () => {
         nodes.forEach((mutation, nodeKey) => {
           switch (mutation) {
             case "created":
@@ -258,22 +270,24 @@ export class CollabInstance {
                 console.error(`Node not found ${nodeKey}`);
                 return;
               }
-              const syncId = $getState(node, syncIdState);
-              if (syncId === SYNC_ID_UNSET) {
-                console.error(`Node does not have sync ID ${nodeKey}`);
+              let syncId = $getState(node, syncIdState);
+              const mappedNode = this.getNodeBySyncId(syncId);
+              // Brand new node or cloned node.
+              if (
+                syncId === SYNC_ID_UNSET ||
+                (mappedNode && mappedNode.getKey() != node.getKey())
+              ) {
+                syncId = uuidv7();
+                this.mapSyncIdToNodeKey(syncId, node.getKey());
+                $setState(node.getWritable(), syncIdState, syncId);
                 return;
-              }
-              // The pasted node is already mapped, give it a new UUID.
-              // @todo: This might be evidence that all UUIDs should be
-              // assigned in the mutation listener, not the Node class.
-              if (this.getNodeBySyncId(syncId)) {
-                $setState(node, syncIdState, uuidv7());
               }
               break;
           }
         });
-      });
-    }
+      },
+      { tag: SYNC_TAG },
+    );
     this.editor.read(() => {
       nodes.forEach((mutation, nodeKey) => {
         switch (mutation) {
@@ -296,7 +310,7 @@ export class CollabInstance {
             this.messageStack.push({
               type: "upserted",
               userId: this.userId,
-              node: node.exportJSON() as SerializedSyncNode,
+              node: node.exportJSON(),
               previousId: previous ? getNodeSyncId(previous) : undefined,
               nextId: next ? getNodeSyncId(next) : undefined,
               parentId: parent ? getNodeSyncId(parent) : undefined,
@@ -372,8 +386,12 @@ export class CollabInstance {
             if (message.id) {
               this.lastId = message.id;
             }
+            if (!isSerializedSyncNode(message.node)) {
+              console.error(`Node is of unknown type: ${wsMessage.data}`);
+              return;
+            }
             // Update
-            const nodeToUpdate = this.getNodeBySyncId(message.node.syncId);
+            const nodeToUpdate = this.getNodeBySyncId(message.node.$.syncId);
             if (nodeToUpdate) {
               nodeToUpdate.updateFromJSON(message.node);
               return;
@@ -381,15 +399,15 @@ export class CollabInstance {
             // Insert
             let messageNode: LexicalNode;
             switch (message.node.type) {
-              case "sync-paragraph":
-                messageNode = $createSyncParagraphNode().updateFromJSON(
-                  message.node as SerializedSyncParagraphNode,
+              case "paragraph":
+                // @ts-ignore
+                messageNode = $createParagraphNode().updateFromJSON(
+                  message.node,
                 );
                 break;
-              case "sync-text":
-                messageNode = $createSyncTextNode().updateFromJSON(
-                  message.node as SerializedSyncTextNode,
-                );
+              case "text":
+                // @ts-ignore
+                messageNode = $createTextNode().updateFromJSON(message.node);
                 break;
               default:
                 console.error(`Got unknown type ${message.node.type}`);
@@ -404,7 +422,7 @@ export class CollabInstance {
               }
               previousNode.insertAfter(messageNode);
               this.mapSyncIdToNodeKey(
-                message.node.syncId,
+                message.node.$.syncId,
                 messageNode.getKey(),
               );
             } else if (message.nextId) {
@@ -415,7 +433,7 @@ export class CollabInstance {
               }
               nextNode.insertBefore(messageNode);
               this.mapSyncIdToNodeKey(
-                message.node.syncId,
+                message.node.$.syncId,
                 messageNode.getKey(),
               );
             } else if (message.parentId) {
@@ -432,7 +450,7 @@ export class CollabInstance {
               }
               parentNode.append(messageNode);
               this.mapSyncIdToNodeKey(
-                message.node.syncId,
+                message.node.$.syncId,
                 messageNode.getKey(),
               );
             } else {
@@ -442,7 +460,7 @@ export class CollabInstance {
               }
               $getRoot().append(messageNode);
               this.mapSyncIdToNodeKey(
-                message.node.syncId,
+                message.node.$.syncId,
                 messageNode.getKey(),
               );
             }
