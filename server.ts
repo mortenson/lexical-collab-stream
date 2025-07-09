@@ -1,13 +1,22 @@
 import { WebSocketServer, WebSocket } from "ws";
 import Redis from "ioredis";
 import type { SerializedEditorState } from "lexical";
-import { isSyncMessagePeer } from "./src/Collab/Messages";
-import type { SyncMessagePeer, SyncMessage } from "./src/Collab/Messages";
+import { isPeerMessage, isSyncMessageClient } from "./src/Collab/Messages";
+import type {
+  PeerMessage,
+  SyncMessageClient,
+  SyncMessageServer,
+} from "./src/Collab/Messages";
 import parseArgs from "minimist";
 
 // @todo: run real webserver and have this be in path, or put in every message
 // @todo: also put the lastId the client saw in a query param or something
 const defaultDocumentId = "documentId";
+
+// The number of messages every stream
+const STREAM_COUNT = "10";
+// The time between stream reads per client in milliseconds
+const STREAM_DELAY_MS = 250;
 
 console.log("Connecting to Redis...");
 const redis = new Redis();
@@ -65,7 +74,7 @@ const setDocument = (
 };
 
 type RedisStreamChunk = {
-  messages: SyncMessage[];
+  messages: PeerMessage[];
   lastId: string;
 };
 
@@ -75,7 +84,7 @@ const readStreamChunk = async (
 ): Promise<null | RedisStreamChunk> => {
   const results = await redis.xread(
     "COUNT",
-    "50",
+    STREAM_COUNT,
     "STREAMS",
     `streams:${documentId}`,
     lastId,
@@ -86,10 +95,10 @@ const readStreamChunk = async (
 
   const [_, messagesRaw] = results[0];
 
-  const messages: SyncMessage[] = [];
+  const messages: PeerMessage[] = [];
   messagesRaw.forEach(([id, messageRaw]) => {
-    const message: SyncMessage = JSON.parse(messageRaw[1]);
-    if (!isSyncMessagePeer(message)) {
+    const message: PeerMessage = JSON.parse(messageRaw[1]);
+    if (!isPeerMessage(message)) {
       console.error(`Redis contains non-peer message: ${messageRaw[1]}`);
       return;
     }
@@ -107,7 +116,7 @@ const readStreamChunk = async (
 
 const addtoStream = async (
   documentId: string,
-  message: SyncMessagePeer,
+  message: PeerMessage,
 ): Promise<string | null> => {
   return redis.xadd(
     `streams:${documentId}`,
@@ -119,7 +128,7 @@ const addtoStream = async (
 
 // Websocket operations
 
-const sendMessage = (ws: WebSocket, message: SyncMessage) => {
+const sendMessage = (ws: WebSocket, message: SyncMessageServer) => {
   ws.send(JSON.stringify(message));
 };
 
@@ -141,16 +150,17 @@ const listenForMessage = async (
 ) => {
   const chunk = await readStreamChunk(documentId, lastId);
   if (!chunk || chunk.messages.length === 0) {
-    // Some delay is fine when no results are returned given that we track lastId.
-    await delay(100);
+    await delay(STREAM_DELAY_MS);
     await listenForMessage(ws, documentId, lastId);
     return;
   }
 
-  chunk.messages.forEach((message) => {
-    ws.send(JSON.stringify(message));
+  sendMessage(ws, {
+    type: "peer-chunk",
+    messages: chunk.messages,
   });
 
+  await delay(STREAM_DELAY_MS);
   await listenForMessage(ws, documentId, chunk.lastId);
 };
 
@@ -163,35 +173,38 @@ wss.on("connection", (ws) => {
       console.error(`Unexpected binary message: ${str}`);
       return;
     }
-    const messages: SyncMessage[] = JSON.parse(data.toString());
+    const clientMessage: SyncMessageClient = JSON.parse(data.toString());
+    if (!isSyncMessageClient(clientMessage)) {
+      console.error(`Client sent non-client message: ${str}`);
+      return;
+    }
 
     // Some messages are not meant to be broadcast
     // @todo Probably should make this clear in types
-    if (messages.length === 1) {
-      switch (messages[0].type) {
-        // Begin streaming when client is ready.
-        case "init-received":
-          listenForMessage(ws, defaultDocumentId, messages[0].lastId);
-          return;
-        // Persist document from whatever client wants us to (YOLO).
-        case "persist-document":
-          setDocument(defaultDocumentId, {
-            editorState: messages[0].editorState,
-            lastId: messages[0].lastId,
-          });
-          return;
-      }
-    }
-
-    messages.forEach((message) => {
-      if (!isSyncMessagePeer(message)) {
-        console.error(
-          `Client sent a non-peer message, possibly trying to spoof other clients: ${message}`,
-        );
+    switch (clientMessage.type) {
+      // Begin streaming when client is ready.
+      case "init-received":
+        listenForMessage(ws, defaultDocumentId, clientMessage.lastId);
         return;
-      }
-      addtoStream(defaultDocumentId, message);
-    });
+      // Persist document from whatever client wants us to (YOLO).
+      case "persist-document":
+        setDocument(defaultDocumentId, {
+          editorState: clientMessage.editorState,
+          lastId: clientMessage.lastId,
+        });
+        return;
+      case "peer-chunk":
+        clientMessage.messages.forEach((message) => {
+          if (!isPeerMessage(message)) {
+            console.error(
+              `Client sent a non-peer message, possibly trying to spoof other clients: ${message}`,
+            );
+            return;
+          }
+          addtoStream(defaultDocumentId, message);
+        });
+        return;
+    }
   });
 
   sendInitMessage(ws, defaultDocumentId);

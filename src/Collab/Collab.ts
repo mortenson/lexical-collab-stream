@@ -21,18 +21,20 @@ import {
 import { v7 as uuidv7 } from "uuid";
 import { $dfs } from "@lexical/utils";
 import {
+  isPeerMessage,
   isSerializedSyncNode,
   isSyncMessageServer,
-  SyncMessage,
+  PeerMessage,
   SyncMessageClient,
+  SyncMessageServer,
 } from "./Messages";
 
 const SYNC_TAG = "SYNC_TAG";
 
-const CURSOR_INACTIVITY_LIMIT = 10 // seconds
+const CURSOR_INACTIVITY_LIMIT = 10; // seconds
 
 export type CollabCursor = {
-  lastActivity: number
+  lastActivity: number;
   anchorElement: HTMLElement;
   anchorOffset: number;
   focusElement: HTMLElement;
@@ -101,10 +103,10 @@ export class CollabInstance {
   userId: string;
   lastId?: string;
   lastPersistedId?: string;
-  messageStack: SyncMessageClient[];
+  messageStack: PeerMessage[];
   onCursorsChange: CursorListener;
   cursors: Map<string, CollabCursor>;
-  lastCursorMessage?: SyncMessageClient;
+  lastCursorMessage?: PeerMessage;
 
   constructor(
     userId: string,
@@ -160,13 +162,11 @@ export class CollabInstance {
           return;
         }
         this.lastPersistedId = this.lastId;
-        this.send([
-          {
-            type: "persist-document",
-            lastId: this.lastId,
-            editorState: this.editor.getEditorState().toJSON(),
-          },
-        ]);
+        this.send({
+          type: "persist-document",
+          lastId: this.lastId,
+          editorState: this.editor.getEditorState().toJSON(),
+        });
       }
     }, 1000);
 
@@ -178,7 +178,7 @@ export class CollabInstance {
             const anchorSyncId = getNodeSyncId(selection.anchor.getNode());
             const focusSyncId = getNodeSyncId(selection.focus.getNode());
             if (anchorSyncId && focusSyncId) {
-              const message: SyncMessage = {
+              const message: PeerMessage = {
                 type: "cursor",
                 lastActivity: Date.now(),
                 userId: this.userId,
@@ -189,26 +189,33 @@ export class CollabInstance {
               };
               if (
                 this.lastCursorMessage &&
-                JSON.stringify(message, (key, value) => key === 'lastActivity' ? 0 : value) ===
-                  JSON.stringify(this.lastCursorMessage, (key, value) => key === 'lastActivity' ? 0 : value)
+                JSON.stringify(message, (key, value) =>
+                  key === "lastActivity" ? 0 : value,
+                ) ===
+                  JSON.stringify(this.lastCursorMessage, (key, value) =>
+                    key === "lastActivity" ? 0 : value,
+                  )
               ) {
                 return;
               }
               this.lastCursorMessage = message;
-              this.send([message]);
+              this.send({
+                type: "peer-chunk",
+                messages: [message],
+              });
             }
           }
         });
       }
-      let cursorsChanged = false
+      let cursorsChanged = false;
       this.cursors.forEach((cursor, userId) => {
-        if (cursor.lastActivity < Date.now() - (1000 * CURSOR_INACTIVITY_LIMIT)) {
-          this.cursors.delete(userId)
-          cursorsChanged = true
+        if (cursor.lastActivity < Date.now() - 1000 * CURSOR_INACTIVITY_LIMIT) {
+          this.cursors.delete(userId);
+          cursorsChanged = true;
         }
-      })
+      });
       if (cursorsChanged) {
-        this.onCursorsChange(this.cursors)
+        this.onCursorsChange(this.cursors);
       }
     }, 100);
   }
@@ -222,8 +229,8 @@ export class CollabInstance {
     this.removeListenerCallbacks.forEach((f) => f());
   }
 
-  send(messages: SyncMessageClient[]): void {
-    this.ws?.send(JSON.stringify(messages));
+  send(message: SyncMessageClient): void {
+    this.ws?.send(JSON.stringify(message));
   }
 
   mapSyncIdToNodeKey(syncId: string, nodeKey: NodeKey) {
@@ -274,10 +281,17 @@ export class CollabInstance {
   }
 
   flushStack() {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+    if (
+      !this.ws ||
+      this.ws.readyState !== WebSocket.OPEN ||
+      this.messageStack.length === 0
+    ) {
       return;
     }
-    this.send(this.messageStack);
+    this.send({
+      type: "peer-chunk",
+      messages: this.messageStack,
+    });
     this.messageStack = [];
   }
 
@@ -296,7 +310,11 @@ export class CollabInstance {
     }
     const anchorElement = this.editor.getElementByKey(anchorKey);
     const focusElement = this.editor.getElementByKey(focusKey);
-    if (!anchorElement || !focusElement || lastActivity < Date.now() - (1000 * CURSOR_INACTIVITY_LIMIT)) {
+    if (
+      !anchorElement ||
+      !focusElement ||
+      lastActivity < Date.now() - 1000 * CURSOR_INACTIVITY_LIMIT
+    ) {
       this.cursors.delete(userId);
     } else {
       this.cursors.set(userId, {
@@ -403,160 +421,169 @@ export class CollabInstance {
   onMessage(wsMessage: MessageEvent) {
     this.editor.update(
       () => {
-        const message: SyncMessage = JSON.parse(wsMessage.data);
-        if (!isSyncMessageServer(message)) {
+        const serverMessage: SyncMessageServer = JSON.parse(wsMessage.data);
+        if (!isSyncMessageServer(serverMessage)) {
           console.error(
             `Non-server message sent from server: ${wsMessage.data}`,
           );
           return;
         }
-        // Ignore and log when incoming redis ID is in the past.
-        if ("id" in message) {
-          if (
-            this.lastId &&
-            message.id &&
-            compareRedisStreamIds(this.lastId, message.id) > 0
-          ) {
-            console.error(`Out of order message detected: ${wsMessage.data}`);
-            return;
+        if (serverMessage.type === "init") {
+          this.lastId = serverMessage.lastId;
+          const editorState = this.editor.parseEditorState(
+            serverMessage.editorState,
+          );
+          if (!editorState.isEmpty()) {
+            this.editor.setEditorState(editorState, {
+              tag: SYNC_TAG,
+            });
           }
-        }
-        // Ignore messages (probably) sent by us.
-        if ("userId" in message && message.userId === this.userId) {
-          if ("id" in message) {
-            this.lastId = message.id;
-          }
+          this.send({
+            type: "init-received",
+            userId: this.userId,
+            lastId: serverMessage.lastId,
+          });
+          this.editor.setEditable(true);
+          $onUpdate(() => this.populateSyncIdMap());
           return;
         }
-        switch (message.type) {
-          case "init":
-            this.lastId = message.lastId;
-            const editorState = this.editor.parseEditorState(
-              message.editorState,
+        serverMessage.messages.forEach((message) => {
+          if (!isPeerMessage(message)) {
+            console.error(
+              `Non-peer message sent from server: ${wsMessage.data}`,
             );
-            if (!editorState.isEmpty()) {
-              this.editor.setEditorState(editorState, {
-                tag: SYNC_TAG,
-              });
-            }
-            this.send([
-              {
-                type: "init-received",
-                userId: this.userId,
-                lastId: message.lastId,
-              },
-            ]);
-            this.editor.setEditable(true);
-            $onUpdate(() => this.populateSyncIdMap());
-            break;
-          case "upserted":
-            if (message.id) {
-              this.lastId = message.id;
-            }
-            if (!isSerializedSyncNode(message.node)) {
-              console.error(`Node is of unknown type: ${wsMessage.data}`);
-              return;
-            }
-            // Update
-            const nodeToUpdate = this.getNodeBySyncId(message.node.$.syncId);
-            if (nodeToUpdate) {
-              nodeToUpdate.updateFromJSON(message.node);
-              return;
-            }
-            // Insert
-            let messageNode: LexicalNode;
-            switch (message.node.type) {
-              case "paragraph":
-                messageNode = $createParagraphNode().updateFromJSON(
-                  // @ts-ignore
-                  message.node,
-                );
-                break;
-              case "text":
-                // @ts-ignore
-                messageNode = $createTextNode().updateFromJSON(message.node);
-                break;
-              default:
-                console.error(`Got unknown type ${message.node.type}`);
-                return;
-            }
-            // @todo: Handle out of order inserts, maybe on the server
-            if (message.previousId) {
-              const previousNode = this.getNodeBySyncId(message.previousId);
-              if (!previousNode) {
-                console.error(`Previous key not found: ${message.previousId}`);
-                return;
-              }
-              previousNode.insertAfter(messageNode);
-              this.mapSyncIdToNodeKey(
-                message.node.$.syncId,
-                messageNode.getKey(),
-              );
-            } else if (message.nextId) {
-              const nextNode = this.getNodeBySyncId(message.nextId);
-              if (!nextNode) {
-                console.error(`Next key not found: ${message.nextId}`);
-                return;
-              }
-              nextNode.insertBefore(messageNode);
-              this.mapSyncIdToNodeKey(
-                message.node.$.syncId,
-                messageNode.getKey(),
-              );
-            } else if (message.parentId) {
-              const parentNode = this.getNodeBySyncId(message.parentId);
-              if (!parentNode) {
-                console.error(`Parent key not found: ${message.parentId}`);
-                return;
-              }
-              if (!$isElementNode(parentNode)) {
-                console.error(
-                  `Parent is not an element node, can't append to ${message.parentId}`,
-                );
-                return;
-              }
-              parentNode.append(messageNode);
-              this.mapSyncIdToNodeKey(
-                message.node.$.syncId,
-                messageNode.getKey(),
-              );
-            } else {
-              if (messageNode.getType() === "text") {
-                console.error("text nodes cannot be appended to root");
-                return;
-              }
-              $getRoot().append(messageNode);
-              this.mapSyncIdToNodeKey(
-                message.node.$.syncId,
-                messageNode.getKey(),
-              );
-            }
-            break;
-          case "destroyed":
-            if (message.id) {
-              this.lastId = message.id;
-            }
-            const nodeToDestroy = this.getNodeBySyncId(message.syncId);
-            if (!nodeToDestroy) {
-              console.error(`Destroy key not found: ${message.syncId}`);
-              return;
-            }
-            nodeToDestroy.remove(true);
-            break;
-          case "cursor":
-            this.updateCursor(
-              message.userId,
-              message.anchorId,
-              message.anchorOffset,
-              message.focusId,
-              message.focusOffset,
-              message.lastActivity,
-            );
-            break;
-          default:
-            console.error(`Unknown message type: ${wsMessage.data}`);
             return;
-        }
+          }
+          // Ignore and log when incoming redis ID is in the past.
+          if (message.type != "cursor") {
+            if (
+              this.lastId &&
+              message.id &&
+              compareRedisStreamIds(this.lastId, message.id) > 0
+            ) {
+              console.error(`Out of order message detected: ${wsMessage.data}`);
+              return;
+            }
+          }
+          // Ignore messages (probably) sent by us.
+          if (message.userId === this.userId) {
+            if (message.type != "cursor") {
+              this.lastId = message.id;
+            }
+            return;
+          }
+          switch (message.type) {
+            case "upserted":
+              if (message.id) {
+                this.lastId = message.id;
+              }
+              if (!isSerializedSyncNode(message.node)) {
+                console.error(`Node is of unknown type: ${wsMessage.data}`);
+                return;
+              }
+              // Update
+              const nodeToUpdate = this.getNodeBySyncId(message.node.$.syncId);
+              if (nodeToUpdate) {
+                nodeToUpdate.updateFromJSON(message.node);
+                return;
+              }
+              // Insert
+              let messageNode: LexicalNode;
+              switch (message.node.type) {
+                case "paragraph":
+                  messageNode = $createParagraphNode().updateFromJSON(
+                    // @ts-ignore
+                    message.node,
+                  );
+                  break;
+                case "text":
+                  // @ts-ignore
+                  messageNode = $createTextNode().updateFromJSON(message.node);
+                  break;
+                default:
+                  console.error(`Got unknown type ${message.node.type}`);
+                  return;
+              }
+              // @todo: Handle out of order inserts, maybe on the server
+              if (message.previousId) {
+                const previousNode = this.getNodeBySyncId(message.previousId);
+                if (!previousNode) {
+                  console.error(
+                    `Previous key not found: ${message.previousId}`,
+                  );
+                  return;
+                }
+                previousNode.insertAfter(messageNode);
+                this.mapSyncIdToNodeKey(
+                  message.node.$.syncId,
+                  messageNode.getKey(),
+                );
+              } else if (message.nextId) {
+                const nextNode = this.getNodeBySyncId(message.nextId);
+                if (!nextNode) {
+                  console.error(`Next key not found: ${message.nextId}`);
+                  return;
+                }
+                nextNode.insertBefore(messageNode);
+                this.mapSyncIdToNodeKey(
+                  message.node.$.syncId,
+                  messageNode.getKey(),
+                );
+              } else if (message.parentId) {
+                const parentNode = this.getNodeBySyncId(message.parentId);
+                if (!parentNode) {
+                  console.error(`Parent key not found: ${message.parentId}`);
+                  return;
+                }
+                if (!$isElementNode(parentNode)) {
+                  console.error(
+                    `Parent is not an element node, can't append to ${message.parentId}`,
+                  );
+                  return;
+                }
+                parentNode.append(messageNode);
+                this.mapSyncIdToNodeKey(
+                  message.node.$.syncId,
+                  messageNode.getKey(),
+                );
+              } else {
+                if (messageNode.getType() === "text") {
+                  console.error("text nodes cannot be appended to root");
+                  return;
+                }
+                $getRoot().append(messageNode);
+                this.mapSyncIdToNodeKey(
+                  message.node.$.syncId,
+                  messageNode.getKey(),
+                );
+              }
+              break;
+            case "destroyed":
+              if (message.id) {
+                this.lastId = message.id;
+              }
+              const nodeToDestroy = this.getNodeBySyncId(message.syncId);
+              if (!nodeToDestroy) {
+                console.error(`Destroy key not found: ${message.syncId}`);
+                return;
+              }
+              nodeToDestroy.remove(true);
+              break;
+            case "cursor":
+              this.updateCursor(
+                message.userId,
+                message.anchorId,
+                message.anchorOffset,
+                message.focusId,
+                message.focusOffset,
+                message.lastActivity,
+              );
+              break;
+            default:
+              console.error(`Unknown message type: ${wsMessage.data}`);
+              return;
+          }
+        });
       },
       { tag: SYNC_TAG },
     );

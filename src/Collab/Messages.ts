@@ -61,48 +61,61 @@ interface CursorMessage {
   focusOffset: number;
 }
 
-// Messages the server should expect peers to send/broadcast
-export type SyncMessagePeer =
-  | UpsertedMessage
-  | DestroyedMessage
-  | CursorMessage;
+interface TypedMessage {
+  type: string;
+}
 
-export const isSyncMessagePeer = (
-  message: SyncMessage,
-): message is SyncMessagePeer => {
+export const isTypedMessage = (message: any): message is TypedMessage => {
+  return typeof message === "object" && "type" in message;
+};
+
+export type PeerMessage = UpsertedMessage | DestroyedMessage | CursorMessage;
+
+export const isPeerMessage = (message: any): message is PeerMessage => {
   return (
-    message.type === "upserted" ||
-    message.type === "destroyed" ||
-    message.type === "cursor"
+    isTypedMessage(message) &&
+    (message.type === "upserted" ||
+      message.type === "destroyed" ||
+      message.type === "cursor")
   );
+};
+
+// Chunks of peer messages stored in Redis and processed between clients
+export type SyncMessagePeerChunk = {
+  type: "peer-chunk";
+  messages: PeerMessage[];
+};
+
+export const isSyncMessagePeerChunk = (
+  message: any,
+): message is SyncMessagePeerChunk => {
+  return isTypedMessage(message) && message.type === "peer-chunk";
 };
 
 // Messages clients expect the server to send
-export type SyncMessageServer = InitMessage | SyncMessagePeer;
+export type SyncMessageServer = InitMessage | SyncMessagePeerChunk;
 
 export const isSyncMessageServer = (
-  message: SyncMessage,
+  message: any,
 ): message is SyncMessageServer => {
-  return isSyncMessagePeer(message) || message.type === "init";
-};
-
-// Messages the server expects from clients
-export type SyncMessageClient =
-  | InitReceivedMessage
-  | PersistDocumentMessage
-  | SyncMessagePeer;
-
-export const isSyncMessageClient = (
-  message: SyncMessage,
-): message is SyncMessagePeer => {
   return (
-    isSyncMessagePeer(message) ||
-    message.type === "init-received" ||
-    message.type === "persist-document"
+    isSyncMessagePeerChunk(message) ||
+    (isTypedMessage(message) && message.type === "init")
   );
 };
 
-export type SyncMessage =
-  | SyncMessageServer
-  | SyncMessagePeer
-  | SyncMessageClient;
+// Messages the server expects clients to send
+export type SyncMessageClient =
+  | InitReceivedMessage
+  | PersistDocumentMessage
+  | SyncMessagePeerChunk;
+
+export const isSyncMessageClient = (
+  message: any,
+): message is SyncMessageClient => {
+  return (
+    isSyncMessagePeerChunk(message) ||
+    (isTypedMessage(message) &&
+      (message.type === "init-received" || message.type === "persist-document"))
+  );
+};
