@@ -21,6 +21,19 @@ Here's how it works:
    from JSON, or destroys them. Node insertion is always relative to a sibling or
    parent.
 
+### Attempt to diagram
+
+```mermaid
+flowchart RL
+  Redis@{ shape: cyl, label: "Redis Stream" }
+  Client -- "insertAfter" --> EditorState
+  EditorState -- "onMutation" --> Client
+  Client -- "sendMessage" --> Server
+  Server -- "onMessage" --> Client
+  Server -- "XADD" --> Redis
+  Redis -- "XREAD" --> Server
+```
+
 ## Requirements
 
 - Redis running locally on port 6379
