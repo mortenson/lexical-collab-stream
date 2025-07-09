@@ -100,6 +100,7 @@ export class CollabInstance {
   reconnectInterval?: NodeJS.Timeout;
   persistInterval?: NodeJS.Timeout;
   cursorInterval?: NodeJS.Timeout;
+  flushTimer?: NodeJS.Timeout;
   userId: string;
   lastId?: string;
   lastPersistedId?: string;
@@ -288,11 +289,16 @@ export class CollabInstance {
     ) {
       return;
     }
-    this.send({
-      type: "peer-chunk",
-      messages: this.messageStack,
-    });
-    this.messageStack = [];
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+    }
+    this.flushTimer = setTimeout(() => {
+      this.send({
+        type: "peer-chunk",
+        messages: this.messageStack,
+      });
+      this.messageStack = [];
+    }, 50);
   }
 
   updateCursor(

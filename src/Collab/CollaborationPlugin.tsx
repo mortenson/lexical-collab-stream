@@ -31,31 +31,33 @@ type CursorElementProps = {
 
 const CursorElement = ({ userId, cursor }: CursorElementProps) => {
   const rect: DOMRect | void = useMemo(() => {
-    if (
-      !cursor.anchorElement.firstChild ||
-      cursor.anchorElement.firstChild.nodeType !==
-        cursor.anchorElement.firstChild.TEXT_NODE
-    ) {
-      return;
-    }
-    if (
-      !cursor.focusElement.firstChild ||
-      cursor.focusElement.firstChild.nodeType !==
-        cursor.focusElement.firstChild.TEXT_NODE
-    ) {
-      return;
-    }
-    const range = document.createRange();
-    if (
-      cursor.anchorElement.compareDocumentPosition(cursor.focusElement) === 2
-    ) {
-      range.setEnd(cursor.anchorElement.firstChild, cursor.anchorOffset);
-      range.setStart(cursor.focusElement.firstChild, cursor.focusOffset);
-    } else {
-      range.setStart(cursor.anchorElement.firstChild, cursor.anchorOffset);
-      range.setEnd(cursor.focusElement.firstChild, cursor.focusOffset);
-    }
-    return range.getBoundingClientRect();
+    try {
+      if (
+        !cursor.anchorElement.firstChild ||
+        cursor.anchorElement.firstChild.nodeType !==
+          cursor.anchorElement.firstChild.TEXT_NODE
+      ) {
+        return;
+      }
+      if (
+        !cursor.focusElement.firstChild ||
+        cursor.focusElement.firstChild.nodeType !==
+          cursor.focusElement.firstChild.TEXT_NODE
+      ) {
+        return;
+      }
+      const range = document.createRange();
+      if (
+        cursor.anchorElement.compareDocumentPosition(cursor.focusElement) === 2
+      ) {
+        range.setEnd(cursor.anchorElement.firstChild, cursor.anchorOffset);
+        range.setStart(cursor.focusElement.firstChild, cursor.focusOffset);
+      } else {
+        range.setStart(cursor.anchorElement.firstChild, cursor.anchorOffset);
+        range.setEnd(cursor.focusElement.firstChild, cursor.focusOffset);
+      }
+      return range.getBoundingClientRect();
+    } catch (_) {}
   }, [cursor]);
   if (!rect) {
     return <></>;
