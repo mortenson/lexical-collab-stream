@@ -282,17 +282,17 @@ export class CollabInstance {
   }
 
   flushStack() {
-    if (
-      !this.ws ||
-      this.ws.readyState !== WebSocket.OPEN ||
-      this.messageStack.length === 0
-    ) {
-      return;
-    }
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
     }
     this.flushTimer = setTimeout(() => {
+      if (
+        !this.ws ||
+        this.ws.readyState !== WebSocket.OPEN ||
+        this.messageStack.length === 0
+      ) {
+        return;
+      }
       this.send({
         type: "peer-chunk",
         messages: this.messageStack,
