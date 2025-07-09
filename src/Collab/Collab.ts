@@ -16,6 +16,7 @@ import {
   NodeKey,
   NodeMutation,
   ParagraphNode,
+  SKIP_DOM_SELECTION_TAG,
   TextNode,
 } from "lexical";
 import { v7 as uuidv7 } from "uuid";
@@ -374,7 +375,7 @@ export class CollabInstance {
           }
         });
       },
-      { tag: SYNC_TAG },
+      { tag: [SYNC_TAG, SKIP_DOM_SELECTION_TAG] },
     );
     this.editor.read(() => {
       nodes.forEach((mutation, nodeKey) => {
@@ -591,7 +592,7 @@ export class CollabInstance {
           }
         });
       },
-      { tag: SYNC_TAG },
+      { tag: [SYNC_TAG, SKIP_DOM_SELECTION_TAG] },
     );
   }
 }
