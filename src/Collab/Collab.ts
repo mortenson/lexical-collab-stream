@@ -1,5 +1,7 @@
 import {
+  $addUpdateTag,
   $createParagraphNode,
+  $createRangeSelection,
   $createTextNode,
   $getNodeByKey,
   $getRoot,
@@ -8,6 +10,7 @@ import {
   $isElementNode,
   $isRangeSelection,
   $onUpdate,
+  $setSelection,
   $setState,
   createState,
   EditorState,
@@ -21,7 +24,6 @@ import {
 } from "lexical";
 import { v7 as uuidv7 } from "uuid";
 import { $dfs } from "@lexical/utils";
-import toposort from 'toposort';
 import {
   isPeerMessage,
   isSerializedSyncNode,
@@ -107,6 +109,7 @@ export class CollabInstance {
     if (spaceIndex === -1) {
       return
     }
+    const selection = $getSelection()
     const leftSide = text.substring(0, spaceIndex)
     const rightSide = text.substring(spaceIndex+1)
     let spaceNode = $createTextNode(' ')
@@ -129,6 +132,12 @@ export class CollabInstance {
       this.mapSyncIdToNodeKey(rightSideNode.getKey(), rightSideNodeId)
       $setState(rightSideNode, syncIdState, rightSideNodeId)
       spaceNode.insertAfter(rightSideNode)
+    }
+    // "Fix" selection since we messed with nodes
+    if ($isRangeSelection(selection) && selection.focus.getNode().getKey() === node.getKey()) {
+      if (node.getTextContent().length < selection.focus.offset) {
+        node.selectNext(selection.focus.offset - node.getTextContent().length, selection.focus.offset - node.getTextContent().length)
+      }
     }
   };
 
@@ -300,8 +309,7 @@ export class CollabInstance {
       }
       let stack = this.messageStack
       this.messageStack = []
-      // Create a map of syncId -> message, since at least for paragrpah/text
-      // nodes you don't need to update a node before appending to it, for instance.
+      // Flatten the stack to avoid sending duplicative messages.
       const messageMap: Map<string, PeerMessage> = new Map()
       stack.forEach(m => {
         let existing
@@ -309,6 +317,7 @@ export class CollabInstance {
           case 'cursor':
             messageMap.set('cursor', m)
             break
+          // todo: remove all messages for children of destroyed nodes
           case 'destroyed':
             existing = messageMap.get(m.syncId)
             // No reason to tell peers to delete a node we created.
@@ -331,43 +340,9 @@ export class CollabInstance {
             break
         }
       })
-      const flatStack = Array.from(messageMap.values())
-      const graph: [string, string][] = []
-      flatStack.forEach(m => {
-        switch (m.type) {
-          case 'created':
-          case 'updated':
-            if (m.parentId) {
-              graph.push([m.node.$.syncId, m.parentId])
-            }
-            if (m.previousId) {
-              graph.push([m.node.$.syncId, m.previousId])
-            }
-            break
-        }
-      })
-      const sorted = toposort(graph).reverse()
-      flatStack.sort((a, b) => {
-        if (a.type === 'cursor' || a.type === 'destroyed') {
-          return a.type === b.type ? 0 : -1
-        }
-        if (b.type === 'cursor' || b.type === 'destroyed') {
-          return 1
-        }
-        const aIndex = sorted.indexOf(a.node.$.syncId)
-        const bIndex = sorted.indexOf(b.node.$.syncId)
-        if (aIndex === bIndex) {
-          return 0
-        } else if (aIndex === -1) {
-          return aIndex === bIndex ? 0 : -1
-        } else if (bIndex === -1) {
-          return 1
-        }
-        return aIndex - bIndex
-      })
       this.send({
         type: "peer-chunk",
-        messages: stack,
+        messages: Array.from(messageMap.values()),
       });
     }, 50);
   }
