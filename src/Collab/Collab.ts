@@ -21,6 +21,7 @@ import {
 } from "lexical";
 import { v7 as uuidv7 } from "uuid";
 import { $dfs } from "@lexical/utils";
+import toposort from 'toposort';
 import {
   isPeerMessage,
   isSerializedSyncNode,
@@ -44,36 +45,6 @@ export type CollabCursor = {
 
 type CursorListener = (cursors: Map<string, CollabCursor>) => void;
 
-// Splits TextNodes every time the user types a space.
-// This allows users to edit one paragraph without (as many) conflicts.
-const wordSplitTransform = (node: TextNode): void => {
-  const text = node.getTextContent();
-  if (text.length <= 1) {
-    return;
-  }
-  // Did the user just type (or visit) a space? Split the text to create more nodes.
-  const selection = $getSelection();
-  let spaceIndex = -1;
-  if (
-    $isRangeSelection(selection) &&
-    selection.anchor.key === node.getKey() &&
-    selection.anchor.offset <= text.length &&
-    text[selection.anchor.offset - 1] === " "
-  ) {
-    spaceIndex = selection.anchor.offset - 1;
-  }
-  if (spaceIndex === -1) {
-    return;
-  }
-  // Feels like this shouldn't be needed but I think us updating immidiately
-  // on duplicate keys in onMutation is messing up the selection pretty bad.
-  const nodes = node.splitText(spaceIndex);
-  nodes.shift();
-  nodes.forEach((node) => {
-    $setState(node, syncIdState, uuidv7());
-  });
-};
-
 const compareRedisStreamIds = (a: string, b: string): number => {
   return parseInt(a.split("-")[0]) - parseInt(b.split("-")[0]);
 };
@@ -95,6 +66,7 @@ const getNodeSyncId = (node: LexicalNode): string | undefined => {
 export class CollabInstance {
   syncIdToNodeKey: Map<string, NodeKey>;
   nodeKeyToSyncId: Map<NodeKey, string>;
+  destroyedSyncIds: Map<NodeKey, boolean>;
   editor: LexicalEditor;
   ws?: WebSocket;
   removeListenerCallbacks: (() => void)[];
@@ -119,11 +91,46 @@ export class CollabInstance {
     this.userId = userId;
     this.syncIdToNodeKey = new Map();
     this.nodeKeyToSyncId = new Map();
+    this.destroyedSyncIds = new Map();
     this.messageStack = [];
     this.removeListenerCallbacks = [];
     this.cursors = new Map();
     this.onCursorsChange = onCursorsChange;
   }
+
+  wordSplitTransform (node: TextNode): void {
+    const text = node.getTextContent();
+    if (text.length <= 1) {
+      return
+    }
+    const spaceIndex = text.indexOf(' ')
+    if (spaceIndex === -1) {
+      return
+    }
+    const leftSide = text.substring(0, spaceIndex)
+    const rightSide = text.substring(spaceIndex+1)
+    let spaceNode = $createTextNode(' ')
+    if (!spaceNode.isUnmergeable()) {
+      spaceNode.toggleUnmergeable()
+    }
+    const spaceNodeId = uuidv7()
+    this.mapSyncIdToNodeKey(spaceNode.getKey(), spaceNodeId)
+    $setState(spaceNode, syncIdState, spaceNodeId)
+    if (leftSide.length !== 0) {
+      node.setTextContent(leftSide)
+      node.insertAfter(spaceNode)
+    } else {
+      node.setTextContent(' ')
+      spaceNode = node
+    }
+    if (rightSide.length !== 0) {
+      const rightSideNode = $createTextNode(rightSide)
+      const rightSideNodeId = uuidv7()
+      this.mapSyncIdToNodeKey(rightSideNode.getKey(), rightSideNodeId)
+      $setState(rightSideNode, syncIdState, rightSideNodeId)
+      spaceNode.insertAfter(rightSideNode)
+    }
+  };
 
   start() {
     clearInterval(this.reconnectInterval);
@@ -141,7 +148,7 @@ export class CollabInstance {
         TextNode,
         this.onMutation.bind(this),
       ),
-      this.editor.registerNodeTransform(TextNode, wordSplitTransform),
+      this.editor.registerNodeTransform(TextNode, this.wordSplitTransform.bind(this)),
     ];
     this.ws = new WebSocket("ws://127.0.0.1:9045");
     this.ws.addEventListener("error", (error) => {
@@ -153,16 +160,13 @@ export class CollabInstance {
 
     this.reconnectInterval = setInterval(() => {
       if (this.ws && this.ws.readyState === this.ws.CLOSED) {
-        console.log("websocket closed, reconnecting...");
+        console.error("websocket closed, reconnecting...");
         this.start();
       }
     }, 1000);
 
     this.persistInterval = setInterval(() => {
-      if (this.ws && this.ws.readyState === this.ws.OPEN && this.lastId) {
-        if (this.lastPersistedId && this.lastId === this.lastPersistedId) {
-          return;
-        }
+      if (this.ws && this.ws.readyState === this.ws.OPEN && this.lastId && (!this.lastPersistedId || this.lastId !== this.lastPersistedId)) {
         this.lastPersistedId = this.lastId;
         this.send({
           type: "persist-document",
@@ -294,11 +298,77 @@ export class CollabInstance {
       ) {
         return;
       }
+      let stack = this.messageStack
+      this.messageStack = []
+      // Create a map of syncId -> message, since at least for paragrpah/text
+      // nodes you don't need to update a node before appending to it, for instance.
+      const messageMap: Map<string, PeerMessage> = new Map()
+      stack.forEach(m => {
+        let existing
+        switch (m.type) {
+          case 'cursor':
+            messageMap.set('cursor', m)
+            break
+          case 'destroyed':
+            existing = messageMap.get(m.syncId)
+            // No reason to tell peers to delete a node we created.
+            if (existing && existing.type === 'created') {
+              messageMap.delete(m.syncId)
+            } else {
+              messageMap.set(m.syncId, m)
+            }
+            break
+          case 'created':
+          case 'updated':
+            existing = messageMap.get(m.node.$.syncId)
+            if (existing && existing.type === 'created') {
+              // Better to just update the created message with updated node
+              existing.node = m.node
+              messageMap.set(m.node.$.syncId, existing)
+            } else if (!existing || existing?.type !== 'destroyed') {
+              messageMap.set(m.node.$.syncId, m)
+            }
+            break
+        }
+      })
+      const flatStack = Array.from(messageMap.values())
+      const graph: [string, string][] = []
+      flatStack.forEach(m => {
+        switch (m.type) {
+          case 'created':
+          case 'updated':
+            if (m.parentId) {
+              graph.push([m.node.$.syncId, m.parentId])
+            }
+            if (m.previousId) {
+              graph.push([m.node.$.syncId, m.previousId])
+            }
+            break
+        }
+      })
+      const sorted = toposort(graph).reverse()
+      flatStack.sort((a, b) => {
+        if (a.type === 'cursor' || a.type === 'destroyed') {
+          return a.type === b.type ? 0 : -1
+        }
+        if (b.type === 'cursor' || b.type === 'destroyed') {
+          return 1
+        }
+        const aIndex = sorted.indexOf(a.node.$.syncId)
+        const bIndex = sorted.indexOf(b.node.$.syncId)
+        if (aIndex === bIndex) {
+          return 0
+        } else if (aIndex === -1) {
+          return aIndex === bIndex ? 0 : -1
+        } else if (bIndex === -1) {
+          return 1
+        }
+        return aIndex - bIndex
+      })
       this.send({
         type: "peer-chunk",
-        messages: this.messageStack,
+        messages: stack,
       });
-      this.messageStack = [];
     }, 50);
   }
 
@@ -394,14 +464,13 @@ export class CollabInstance {
             }
             this.mapSyncIdToNodeKey(syncId, nodeKey);
             const previous = node.getPreviousSibling();
-            const next = node.getNextSibling();
             const parent = node.getParent();
             this.messageStack.push({
-              type: "upserted",
+              type: mutation,
               userId: this.userId,
+              // @ts-ignore
               node: node.exportJSON(),
               previousId: previous ? getNodeSyncId(previous) : undefined,
-              nextId: next ? getNodeSyncId(next) : undefined,
               parentId: parent ? getNodeSyncId(parent) : undefined,
             });
             break;
@@ -413,6 +482,7 @@ export class CollabInstance {
               );
               return;
             }
+            this.destroyedSyncIds.set(destroyedSyncId, true)
             this.messageStack.push({
               type: "destroyed",
               userId: this.userId,
@@ -465,8 +535,8 @@ export class CollabInstance {
           if (message.type != "cursor") {
             if (
               this.lastId &&
-              message.id &&
-              compareRedisStreamIds(this.lastId, message.id) > 0
+              message.streamId &&
+              compareRedisStreamIds(this.lastId, message.streamId) > 0
             ) {
               console.error(`Out of order message detected: ${wsMessage.data}`);
               return;
@@ -475,14 +545,15 @@ export class CollabInstance {
           // Ignore messages (probably) sent by us.
           if (message.userId === this.userId) {
             if (message.type != "cursor") {
-              this.lastId = message.id;
+              this.lastId = message.streamId;
             }
             return;
           }
           switch (message.type) {
-            case "upserted":
-              if (message.id) {
-                this.lastId = message.id;
+            case "created":
+            case "updated":
+              if (message.streamId) {
+                this.lastId = message.streamId;
               }
               if (!isSerializedSyncNode(message.node)) {
                 console.error(`Node is of unknown type: ${wsMessage.data}`);
@@ -515,8 +586,9 @@ export class CollabInstance {
               if (message.previousId) {
                 const previousNode = this.getNodeBySyncId(message.previousId);
                 if (!previousNode) {
+                  const inMessage = serverMessage.messages.find(m => m.type === 'created' && m.node.$.syncId === message.previousId)
                   console.error(
-                    `Previous key not found: ${message.previousId}`,
+                    `Previous key not found: ${message.previousId}`, inMessage,
                   );
                   return;
                 }
@@ -525,21 +597,11 @@ export class CollabInstance {
                   message.node.$.syncId,
                   messageNode.getKey(),
                 );
-              } else if (message.nextId) {
-                const nextNode = this.getNodeBySyncId(message.nextId);
-                if (!nextNode) {
-                  console.error(`Next key not found: ${message.nextId}`);
-                  return;
-                }
-                nextNode.insertBefore(messageNode);
-                this.mapSyncIdToNodeKey(
-                  message.node.$.syncId,
-                  messageNode.getKey(),
-                );
               } else if (message.parentId) {
                 const parentNode = this.getNodeBySyncId(message.parentId);
+                const inMessage = serverMessage.messages.find(m => m.type === 'created' && m.node.$.syncId === message.parentId)
                 if (!parentNode) {
-                  console.error(`Parent key not found: ${message.parentId}`);
+                  console.error(`Parent key not found: ${message.parentId}`, inMessage)
                   return;
                 }
                 if (!$isElementNode(parentNode)) {
@@ -566,8 +628,8 @@ export class CollabInstance {
               }
               break;
             case "destroyed":
-              if (message.id) {
-                this.lastId = message.id;
+              if (message.streamId) {
+                this.lastId = message.streamId;
               }
               const nodeToDestroy = this.getNodeBySyncId(message.syncId);
               if (!nodeToDestroy) {

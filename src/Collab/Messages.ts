@@ -16,18 +16,24 @@ export const isSerializedSyncNode = (
   return node.$ !== undefined && "syncId" in node.$;
 };
 
-interface UpsertedMessage {
-  id?: string;
-  type: "upserted";
+interface UpsertedMessageBase {
+  streamId?: string;
   userId: string;
-  node: SerializedLexicalNode;
+  node: SerializedSyncNode;
   previousId?: string;
-  nextId?: string;
   parentId?: string;
 }
 
+interface CreatedMessage extends UpsertedMessageBase {
+  type: "created";
+}
+
+interface UpdatedMessage extends UpsertedMessageBase {
+  type: "updated";
+}
+
 interface DestroyedMessage {
-  id?: string;
+  streamId?: string;
   type: "destroyed";
   userId: string;
   syncId: string;
@@ -69,14 +75,12 @@ export const isTypedMessage = (message: any): message is TypedMessage => {
   return typeof message === "object" && "type" in message;
 };
 
-export type PeerMessage = UpsertedMessage | DestroyedMessage | CursorMessage;
+export type PeerMessage = CreatedMessage | UpdatedMessage | DestroyedMessage | CursorMessage;
 
 export const isPeerMessage = (message: any): message is PeerMessage => {
   return (
     isTypedMessage(message) &&
-    (message.type === "upserted" ||
-      message.type === "destroyed" ||
-      message.type === "cursor")
+    ['created', 'updated', 'destroyed', 'cursor'].includes(message.type)
   );
 };
 
@@ -115,7 +119,6 @@ export const isSyncMessageClient = (
 ): message is SyncMessageClient => {
   return (
     isSyncMessagePeerChunk(message) ||
-    (isTypedMessage(message) &&
-      (message.type === "init-received" || message.type === "persist-document"))
+    (isTypedMessage(message) && ['init-received', 'persist-document'].includes(message.type))
   );
 };

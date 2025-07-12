@@ -103,7 +103,7 @@ const readStreamChunk = async (
       return;
     }
     if (message.type != "cursor") {
-      message.id = id;
+      message.streamId = id;
     }
     messages.push(message);
   });
