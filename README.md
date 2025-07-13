@@ -51,9 +51,6 @@ flowchart RL
 - Accurate server reconciliation (there's no guarantee all clients have the
   same EditorState, we could have an explicit reconciliation cycle or something
   like rollback+reapply per the blog linked above)
-- Message compression (clients or the server could collapse chains of
-  messages like `upsert 1 -> upsert 1 -> delete 1` to `delete 1`)
-- Undo/redo
 
 ## Not planning to implement
 

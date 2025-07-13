@@ -1,7 +1,5 @@
 import {
-  $addUpdateTag,
   $createParagraphNode,
-  $createRangeSelection,
   $createTextNode,
   $getNodeByKey,
   $getRoot,
@@ -10,8 +8,8 @@ import {
   $isElementNode,
   $isRangeSelection,
   $onUpdate,
-  $setSelection,
   $setState,
+  COMMAND_PRIORITY_CRITICAL,
   createState,
   EditorState,
   LexicalEditor,
@@ -19,8 +17,11 @@ import {
   NodeKey,
   NodeMutation,
   ParagraphNode,
+  REDO_COMMAND,
+  SerializedLexicalNode,
   SKIP_DOM_SELECTION_TAG,
   TextNode,
+  UNDO_COMMAND,
 } from "lexical";
 import { v7 as uuidv7 } from "uuid";
 import { $dfs } from "@lexical/utils";
@@ -28,6 +29,7 @@ import {
   isPeerMessage,
   isSerializedSyncNode,
   isSyncMessageServer,
+  NodeMessageBase,
   PeerMessage,
   SyncMessageClient,
   SyncMessageServer,
@@ -65,10 +67,23 @@ const getNodeSyncId = (node: LexicalNode): string | undefined => {
   return syncId;
 };
 
+// Allows JSON exporting for a node that isn't in the editor state.
+// This is, uh, pretty gross since it overrides getLatest(), but I think the
+// alternative is keeping a Map of destroyed NodeKeys to JSON which seems worse
+const exportNonLatestJSON = (node: LexicalNode): SerializedLexicalNode => {
+  const proto = Object.getPrototypeOf(node);
+  const oldGetLatest = proto.getLatest;
+  proto.getLatest = function () {
+    return this;
+  };
+  const json = node.exportJSON();
+  proto.getLatest = oldGetLatest;
+  return json;
+};
+
 export class CollabInstance {
   syncIdToNodeKey: Map<string, NodeKey>;
   nodeKeyToSyncId: Map<NodeKey, string>;
-  destroyedSyncIds: Map<NodeKey, boolean>;
   editor: LexicalEditor;
   ws?: WebSocket;
   removeListenerCallbacks: (() => void)[];
@@ -80,9 +95,12 @@ export class CollabInstance {
   lastId?: string;
   lastPersistedId?: string;
   messageStack: PeerMessage[];
+  undoStack: PeerMessage[][];
+  redoStack: PeerMessage[][];
   onCursorsChange: CursorListener;
   cursors: Map<string, CollabCursor>;
   lastCursorMessage?: PeerMessage;
+  undoCommandRunning: boolean;
 
   constructor(
     userId: string,
@@ -93,53 +111,61 @@ export class CollabInstance {
     this.userId = userId;
     this.syncIdToNodeKey = new Map();
     this.nodeKeyToSyncId = new Map();
-    this.destroyedSyncIds = new Map();
     this.messageStack = [];
+    this.undoStack = [];
+    this.redoStack = [];
     this.removeListenerCallbacks = [];
     this.cursors = new Map();
     this.onCursorsChange = onCursorsChange;
+    this.undoCommandRunning = false;
   }
 
-  wordSplitTransform (node: TextNode): void {
+  wordSplitTransform(node: TextNode): void {
     const text = node.getTextContent();
     if (text.length <= 1) {
-      return
+      return;
     }
-    const spaceIndex = text.indexOf(' ')
+    const spaceIndex = text.indexOf(" ");
     if (spaceIndex === -1) {
-      return
+      return;
     }
-    const selection = $getSelection()
-    const leftSide = text.substring(0, spaceIndex)
-    const rightSide = text.substring(spaceIndex+1)
-    let spaceNode = $createTextNode(' ')
+    const selection = $getSelection();
+    const leftSide = text.substring(0, spaceIndex);
+    const rightSide = text.substring(spaceIndex + 1);
+    let spaceNode = $createTextNode(" ");
     if (!spaceNode.isUnmergeable()) {
-      spaceNode.toggleUnmergeable()
+      spaceNode.toggleUnmergeable();
     }
-    const spaceNodeId = uuidv7()
-    this.mapSyncIdToNodeKey(spaceNode.getKey(), spaceNodeId)
-    $setState(spaceNode, syncIdState, spaceNodeId)
+    const spaceNodeId = uuidv7();
+    this.mapSyncIdToNodeKey(spaceNode.getKey(), spaceNodeId);
+    $setState(spaceNode, syncIdState, spaceNodeId);
     if (leftSide.length !== 0) {
-      node.setTextContent(leftSide)
-      node.insertAfter(spaceNode)
+      node.setTextContent(leftSide);
+      node.insertAfter(spaceNode);
     } else {
-      node.setTextContent(' ')
-      spaceNode = node
+      node.setTextContent(" ");
+      spaceNode = node;
     }
     if (rightSide.length !== 0) {
-      const rightSideNode = $createTextNode(rightSide)
-      const rightSideNodeId = uuidv7()
-      this.mapSyncIdToNodeKey(rightSideNode.getKey(), rightSideNodeId)
-      $setState(rightSideNode, syncIdState, rightSideNodeId)
-      spaceNode.insertAfter(rightSideNode)
+      const rightSideNode = $createTextNode(rightSide);
+      const rightSideNodeId = uuidv7();
+      this.mapSyncIdToNodeKey(rightSideNode.getKey(), rightSideNodeId);
+      $setState(rightSideNode, syncIdState, rightSideNodeId);
+      spaceNode.insertAfter(rightSideNode);
     }
     // "Fix" selection since we messed with nodes
-    if ($isRangeSelection(selection) && selection.focus.getNode().getKey() === node.getKey()) {
+    if (
+      $isRangeSelection(selection) &&
+      selection.focus.getNode().getKey() === node.getKey()
+    ) {
       if (node.getTextContent().length < selection.focus.offset) {
-        node.selectNext(selection.focus.offset - node.getTextContent().length, selection.focus.offset - node.getTextContent().length)
+        node.selectNext(
+          selection.focus.offset - node.getTextContent().length,
+          selection.focus.offset - node.getTextContent().length,
+        );
       }
     }
-  };
+  }
 
   start() {
     clearInterval(this.reconnectInterval);
@@ -157,7 +183,48 @@ export class CollabInstance {
         TextNode,
         this.onMutation.bind(this),
       ),
-      this.editor.registerNodeTransform(TextNode, this.wordSplitTransform.bind(this)),
+      this.editor.registerNodeTransform(
+        TextNode,
+        this.wordSplitTransform.bind(this),
+      ),
+      this.editor.registerCommand(
+        UNDO_COMMAND,
+        (_) => {
+          const lastStack = this.undoStack.pop();
+          if (!lastStack) {
+            return true;
+          }
+          this.redoStack.push(lastStack);
+          this.undoCommandRunning = true;
+          this.editor.update(
+            () => {
+              lastStack.forEach((m) => this.reverseMessage(m));
+            },
+            { tag: SKIP_DOM_SELECTION_TAG },
+          );
+          return true;
+        },
+        COMMAND_PRIORITY_CRITICAL,
+      ),
+      this.editor.registerCommand(
+        REDO_COMMAND,
+        (_) => {
+          const lastStack = this.redoStack.pop();
+          if (!lastStack) {
+            return true;
+          }
+          this.undoStack.push(lastStack);
+          this.undoCommandRunning = true;
+          this.editor.update(
+            () => {
+              lastStack.forEach((m) => this.applyMessage(m));
+            },
+            { tag: SKIP_DOM_SELECTION_TAG },
+          );
+          return true;
+        },
+        COMMAND_PRIORITY_CRITICAL,
+      ),
     ];
     this.ws = new WebSocket("ws://127.0.0.1:9045");
     this.ws.addEventListener("error", (error) => {
@@ -175,7 +242,12 @@ export class CollabInstance {
     }, 1000);
 
     this.persistInterval = setInterval(() => {
-      if (this.ws && this.ws.readyState === this.ws.OPEN && this.lastId && (!this.lastPersistedId || this.lastId !== this.lastPersistedId)) {
+      if (
+        this.ws &&
+        this.ws.readyState === this.ws.OPEN &&
+        this.lastId &&
+        (!this.lastPersistedId || this.lastId !== this.lastPersistedId)
+      ) {
         this.lastPersistedId = this.lastId;
         this.send({
           type: "persist-document",
@@ -242,6 +314,7 @@ export class CollabInstance {
       this.ws.close();
     }
     this.removeListenerCallbacks.forEach((f) => f());
+    this.removeListenerCallbacks = [];
   }
 
   send(message: SyncMessageClient): void {
@@ -257,16 +330,8 @@ export class CollabInstance {
       console.error(`Attempted to set default value ${syncId} => ${nodeKey}`);
       return;
     }
-    const knownNode = this.syncIdToNodeKey.get(syncId);
-    if (!knownNode) {
-      this.syncIdToNodeKey.set(syncId, nodeKey);
-      this.nodeKeyToSyncId.set(nodeKey, syncId);
-    } else if (knownNode !== nodeKey) {
-      console.error(
-        `Duplicate node keys exist for ${syncId}: mapped=${knownNode}, found=${nodeKey}`,
-      );
-      return;
-    }
+    this.syncIdToNodeKey.set(syncId, nodeKey);
+    this.nodeKeyToSyncId.set(nodeKey, syncId);
   }
 
   populateSyncIdMap() {
@@ -307,42 +372,48 @@ export class CollabInstance {
       ) {
         return;
       }
-      let stack = this.messageStack
-      this.messageStack = []
+      let stack = this.messageStack;
+      this.messageStack = [];
       // Flatten the stack to avoid sending duplicative messages.
-      const messageMap: Map<string, PeerMessage> = new Map()
-      stack.forEach(m => {
-        let existing
+      const messageMap: Map<string, PeerMessage> = new Map();
+      stack.forEach((m) => {
+        let existing;
         switch (m.type) {
-          case 'cursor':
-            messageMap.set('cursor', m)
-            break
+          case "cursor":
+            messageMap.set("cursor", m);
+            break;
           // todo: remove all messages for children of destroyed nodes
-          case 'destroyed':
-            existing = messageMap.get(m.syncId)
+          case "destroyed":
+            existing = messageMap.get(m.node.$.syncId);
             // No reason to tell peers to delete a node we created.
-            if (existing && existing.type === 'created') {
-              messageMap.delete(m.syncId)
+            if (existing && existing.type === "created") {
+              messageMap.delete(m.node.$.syncId);
             } else {
-              messageMap.set(m.syncId, m)
+              messageMap.set(m.node.$.syncId, m);
             }
-            break
-          case 'created':
-          case 'updated':
-            existing = messageMap.get(m.node.$.syncId)
-            if (existing && existing.type === 'created') {
+            break;
+          case "created":
+          case "updated":
+            existing = messageMap.get(m.node.$.syncId);
+            if (existing && existing.type === "created") {
               // Better to just update the created message with updated node
-              existing.node = m.node
-              messageMap.set(m.node.$.syncId, existing)
-            } else if (!existing || existing?.type !== 'destroyed') {
-              messageMap.set(m.node.$.syncId, m)
+              existing.node = m.node;
+              messageMap.set(m.node.$.syncId, existing);
+            } else if (!existing || existing?.type !== "destroyed") {
+              messageMap.set(m.node.$.syncId, m);
             }
-            break
+            break;
         }
-      })
+      });
+      const flatStack = Array.from(messageMap.values());
+      if (!this.undoCommandRunning) {
+        this.undoStack.push(flatStack);
+      } else {
+        this.undoCommandRunning = false;
+      }
       this.send({
         type: "peer-chunk",
-        messages: Array.from(messageMap.values()),
+        messages: flatStack,
       });
     }, 50);
   }
@@ -384,6 +455,7 @@ export class CollabInstance {
     nodes: Map<NodeKey, NodeMutation>,
     {
       updateTags,
+      prevEditorState,
     }: {
       updateTags: Set<string>;
       dirtyLeaves: Set<string>;
@@ -424,22 +496,24 @@ export class CollabInstance {
     );
     this.editor.read(() => {
       nodes.forEach((mutation, nodeKey) => {
+        let previous, parent, node, syncId;
         switch (mutation) {
           case "created":
           case "updated":
-            const node = $getNodeByKey(nodeKey);
+            node = $getNodeByKey(nodeKey);
             if (!node) {
               console.error(`Node not found ${nodeKey}`);
               return;
             }
-            const syncId = $getState(node, syncIdState);
+            syncId = $getState(node, syncIdState);
             if (syncId === SYNC_ID_UNSET) {
               console.error(`Node does not have sync ID ${nodeKey}`);
               return;
             }
             this.mapSyncIdToNodeKey(syncId, nodeKey);
-            const previous = node.getPreviousSibling();
-            const parent = node.getParent();
+            previous = node.getPreviousSibling();
+            parent = node.getParent();
+            const previousNode = $getNodeByKey(nodeKey, prevEditorState);
             this.messageStack.push({
               type: mutation,
               userId: this.userId,
@@ -447,21 +521,39 @@ export class CollabInstance {
               node: node.exportJSON(),
               previousId: previous ? getNodeSyncId(previous) : undefined,
               parentId: parent ? getNodeSyncId(parent) : undefined,
+              ...(mutation === "updated" && previousNode
+                ? {
+                    previousNode: exportNonLatestJSON(previousNode),
+                  }
+                : {}),
             });
             break;
           case "destroyed":
-            const destroyedSyncId = this.nodeKeyToSyncId.get(nodeKey);
-            if (!destroyedSyncId) {
+            syncId = this.nodeKeyToSyncId.get(nodeKey);
+            if (!syncId) {
               console.error(
                 `Node key never mapped for destroy message: ${nodeKey}`,
               );
               return;
             }
-            this.destroyedSyncIds.set(destroyedSyncId, true)
+            node = $getNodeByKey(nodeKey, prevEditorState);
+            if (!node) {
+              console.error(
+                `Destroyed node not found in previous editor state ${nodeKey}`,
+              );
+              return;
+            }
             this.messageStack.push({
               type: "destroyed",
               userId: this.userId,
-              syncId: destroyedSyncId,
+              // @ts-ignore
+              node: exportNonLatestJSON(node),
+              previousId: node.__prev
+                ? this.nodeKeyToSyncId.get(node.__prev)
+                : undefined,
+              parentId: node.__parent
+                ? this.nodeKeyToSyncId.get(node.__parent)
+                : undefined,
             });
             break;
         }
@@ -524,112 +616,155 @@ export class CollabInstance {
             }
             return;
           }
-          switch (message.type) {
-            case "created":
-            case "updated":
-              if (message.streamId) {
-                this.lastId = message.streamId;
-              }
-              if (!isSerializedSyncNode(message.node)) {
-                console.error(`Node is of unknown type: ${wsMessage.data}`);
-                return;
-              }
-              // Update
-              const nodeToUpdate = this.getNodeBySyncId(message.node.$.syncId);
-              if (nodeToUpdate) {
-                nodeToUpdate.updateFromJSON(message.node);
-                return;
-              }
-              // Insert
-              let messageNode: LexicalNode;
-              switch (message.node.type) {
-                case "paragraph":
-                  messageNode = $createParagraphNode().updateFromJSON(
-                    // @ts-ignore
-                    message.node,
-                  );
-                  break;
-                case "text":
-                  // @ts-ignore
-                  messageNode = $createTextNode().updateFromJSON(message.node);
-                  break;
-                default:
-                  console.error(`Got unknown type ${message.node.type}`);
-                  return;
-              }
-              // @todo: Handle out of order inserts, maybe on the server
-              if (message.previousId) {
-                const previousNode = this.getNodeBySyncId(message.previousId);
-                if (!previousNode) {
-                  const inMessage = serverMessage.messages.find(m => m.type === 'created' && m.node.$.syncId === message.previousId)
-                  console.error(
-                    `Previous key not found: ${message.previousId}`, inMessage,
-                  );
-                  return;
-                }
-                previousNode.insertAfter(messageNode);
-                this.mapSyncIdToNodeKey(
-                  message.node.$.syncId,
-                  messageNode.getKey(),
-                );
-              } else if (message.parentId) {
-                const parentNode = this.getNodeBySyncId(message.parentId);
-                const inMessage = serverMessage.messages.find(m => m.type === 'created' && m.node.$.syncId === message.parentId)
-                if (!parentNode) {
-                  console.error(`Parent key not found: ${message.parentId}`, inMessage)
-                  return;
-                }
-                if (!$isElementNode(parentNode)) {
-                  console.error(
-                    `Parent is not an element node, can't append to ${message.parentId}`,
-                  );
-                  return;
-                }
-                parentNode.append(messageNode);
-                this.mapSyncIdToNodeKey(
-                  message.node.$.syncId,
-                  messageNode.getKey(),
-                );
-              } else {
-                if (messageNode.getType() === "text") {
-                  console.error("text nodes cannot be appended to root");
-                  return;
-                }
-                $getRoot().append(messageNode);
-                this.mapSyncIdToNodeKey(
-                  message.node.$.syncId,
-                  messageNode.getKey(),
-                );
-              }
-              break;
-            case "destroyed":
-              if (message.streamId) {
-                this.lastId = message.streamId;
-              }
-              const nodeToDestroy = this.getNodeBySyncId(message.syncId);
-              if (!nodeToDestroy) {
-                console.error(`Destroy key not found: ${message.syncId}`);
-                return;
-              }
-              nodeToDestroy.remove(true);
-              break;
-            case "cursor":
-              this.updateCursor(
-                message.userId,
-                message.anchorId,
-                message.anchorOffset,
-                message.focusId,
-                message.focusOffset,
-                message.lastActivity,
-              );
-              break;
-            default:
-              console.error(`Unknown message type: ${wsMessage.data}`);
-              return;
-          }
+          this.applyMessage(message);
         });
       },
       { tag: [SYNC_TAG, SKIP_DOM_SELECTION_TAG] },
     );
+  }
+
+  applyMessage(message: PeerMessage) {
+    switch (message.type) {
+      case "created":
+      case "updated":
+        if (message.streamId) {
+          this.lastId = message.streamId;
+        }
+        if (!isSerializedSyncNode(message.node)) {
+          console.error(
+            `Node is of unknown type: ${JSON.stringify(message.node)}`,
+          );
+          return;
+        }
+        // Update
+        const nodeToUpdate = this.getNodeBySyncId(message.node.$.syncId);
+        if (nodeToUpdate) {
+          nodeToUpdate.updateFromJSON(message.node);
+          return;
+        }
+        // Insert
+        this.createNodeFromMessage(message);
+        break;
+      case "destroyed":
+        if (message.streamId) {
+          this.lastId = message.streamId;
+        }
+        const nodeToDestroy = this.getNodeBySyncId(message.node.$.syncId);
+        if (!nodeToDestroy) {
+          console.error(`Destroy key not found: ${message.node.$.syncId}`);
+          return;
+        }
+        nodeToDestroy.remove(true);
+        break;
+      case "cursor":
+        this.updateCursor(
+          message.userId,
+          message.anchorId,
+          message.anchorOffset,
+          message.focusId,
+          message.focusOffset,
+          message.lastActivity,
+        );
+        break;
+      default:
+        console.error(`Unknown message type: ${JSON.stringify(message)}`);
+        return;
+    }
+  }
+
+  // Attempts to undo an applyMessage operation
+  reverseMessage(message: PeerMessage) {
+    switch (message.type) {
+      case "created":
+        if (!isSerializedSyncNode(message.node)) {
+          console.error(
+            `Node is of unknown type: ${JSON.stringify(message.node)}`,
+          );
+          return;
+        }
+        const nodeToDestroy = this.getNodeBySyncId(message.node.$.syncId);
+        if (!nodeToDestroy) {
+          console.error(
+            "Attempted to reverse create operation but node does not exist",
+          );
+          return;
+        }
+        this.syncIdToNodeKey.delete(message.node.$.syncId);
+        nodeToDestroy.remove();
+        break;
+      case "updated":
+        if (!isSerializedSyncNode(message.node)) {
+          console.error(
+            `Node is of unknown type: ${JSON.stringify(message.node)}`,
+          );
+          return;
+        }
+        const nodeToUpdate = this.getNodeBySyncId(message.node.$.syncId);
+        if (nodeToUpdate) {
+          nodeToUpdate.updateFromJSON(message.previousNode);
+          return;
+        }
+        break;
+      case "destroyed":
+        this.syncIdToNodeKey.delete(message.node.$.syncId);
+        this.createNodeFromMessage(message);
+        break;
+      case "cursor":
+        // no-op, although moving our own cursor back in time might be cool
+        break;
+      default:
+        console.error(`Unknown message type: ${JSON.stringify(message)}`);
+        return;
+    }
+  }
+
+  createNodeFromMessage(message: NodeMessageBase) {
+    let messageNode;
+    switch (message.node.type) {
+      case "paragraph":
+        messageNode = $createParagraphNode().updateFromJSON(
+          // @ts-ignore
+          message.node,
+        );
+        break;
+      case "text":
+        // @ts-ignore
+        messageNode = $createTextNode().updateFromJSON(message.node);
+        break;
+      default:
+        console.error(`Got unknown type ${message.node.type}`);
+        return;
+    }
+    // @todo: Handle out of order inserts, maybe on the server
+    if (message.previousId) {
+      const previousNode = this.getNodeBySyncId(message.previousId);
+      if (!previousNode) {
+        console.error(`Previous key not found: ${message.previousId}`);
+        return;
+      }
+      previousNode.insertAfter(messageNode);
+      this.mapSyncIdToNodeKey(message.node.$.syncId, messageNode.getKey());
+    } else if (message.parentId) {
+      const parentNode = this.getNodeBySyncId(message.parentId);
+      if (!parentNode) {
+        console.error(`Parent key not found: ${message.parentId}`);
+        return;
+      }
+      if (!$isElementNode(parentNode)) {
+        console.error(
+          `Parent is not an element node, can't append to ${message.parentId}`,
+        );
+        return;
+      }
+      parentNode.append(messageNode);
+      this.mapSyncIdToNodeKey(message.node.$.syncId, messageNode.getKey());
+    } else {
+      if (messageNode.getType() === "text") {
+        console.error("text nodes cannot be appended to root");
+        return;
+      }
+      $getRoot().append(messageNode);
+      this.mapSyncIdToNodeKey(message.node.$.syncId, messageNode.getKey());
+    }
   }
 }
