@@ -101,6 +101,7 @@ export class CollabInstance {
   cursors: Map<string, CollabCursor>;
   lastCursorMessage?: PeerMessage;
   undoCommandRunning: boolean;
+  shouldReconnect: boolean
 
   constructor(
     userId: string,
@@ -118,6 +119,7 @@ export class CollabInstance {
     this.cursors = new Map();
     this.onCursorsChange = onCursorsChange;
     this.undoCommandRunning = false;
+    this.shouldReconnect = false
   }
 
   wordSplitTransform(node: TextNode): void {
@@ -170,9 +172,7 @@ export class CollabInstance {
   start() {
     clearInterval(this.reconnectInterval);
     clearInterval(this.persistInterval);
-    if (this.ws) {
-      this.ws.close();
-    }
+    this.connect()
     this.removeListenerCallbacks = [
       // @todo Feels like we could generically support every element type?
       this.editor.registerMutationListener(
@@ -226,18 +226,11 @@ export class CollabInstance {
         COMMAND_PRIORITY_CRITICAL,
       ),
     ];
-    this.ws = new WebSocket("ws://127.0.0.1:9045");
-    this.ws.addEventListener("error", (error) => {
-      console.error(error);
-      this.ws?.close();
-    });
-    this.ws.addEventListener("open", () => this.flushStack());
-    this.ws.addEventListener("message", this.onMessage.bind(this));
 
     this.reconnectInterval = setInterval(() => {
-      if (this.ws && this.ws.readyState === this.ws.CLOSED) {
+      if (this.ws && this.ws.readyState === this.ws.CLOSED && this.shouldReconnect) {
         console.error("websocket closed, reconnecting...");
-        this.start();
+        this.connect()
       }
     }, 1000);
 
@@ -307,12 +300,23 @@ export class CollabInstance {
     }, 100);
   }
 
+  connect() {
+    this.ws?.close()
+    this.ws = new WebSocket("ws://127.0.0.1:9045");
+    this.ws.addEventListener("error", (error) => {
+      console.error(error);
+      this.ws?.close();
+    });
+    this.ws.addEventListener("open", () => this.flushStack());
+    this.ws.addEventListener("message", this.onMessage.bind(this));
+  }
+
   stop() {
+    clearInterval(this.persistInterval)
     clearInterval(this.reconnectInterval);
     clearInterval(this.persistInterval);
-    if (this.ws) {
-      this.ws.close();
-    }
+    clearTimeout(this.flushTimer)
+    this.ws?.close();
     this.removeListenerCallbacks.forEach((f) => f());
     this.removeListenerCallbacks = [];
   }
@@ -573,6 +577,15 @@ export class CollabInstance {
           return;
         }
         if (serverMessage.type === "init") {
+          // We've reconnected, don't want to override our editor state.
+          if (this.lastId) {
+            this.send({
+              type: "init-received",
+              userId: this.userId,
+              lastId: this.lastId,
+            });
+            return
+          }
           this.lastId = serverMessage.lastId;
           const editorState = this.editor.parseEditorState(
             serverMessage.editorState,
@@ -766,5 +779,14 @@ export class CollabInstance {
       $getRoot().append(messageNode);
       this.mapSyncIdToNodeKey(message.node.$.syncId, messageNode.getKey());
     }
+  }
+
+  debugDisconnect() {
+    this.shouldReconnect = false
+    this.ws?.close()
+  }
+
+  debugReconnect() {
+    this.shouldReconnect = true
   }
 }
