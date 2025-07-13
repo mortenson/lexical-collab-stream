@@ -619,8 +619,23 @@ export class CollabInstance {
         // Update
         const nodeToUpdate = this.getNodeBySyncId(message.node.$.syncId);
         if (nodeToUpdate) {
-          nodeToUpdate.updateFromJSON(message.node);
-          return;
+          const parent = nodeToUpdate.getParent();
+          const parentSyncId = parent
+            ? $getState(parent, syncIdState)
+            : SYNC_ID_UNSET;
+          if (
+            parentSyncId !== SYNC_ID_UNSET &&
+            message.parentId &&
+            parentSyncId !== message.parentId
+          ) {
+            // The node moved, we should remove it, then treat it as a create.
+            this.nodeKeyToSyncId.delete(nodeToUpdate.getKey());
+            this.syncIdToNodeKey.delete(message.node.$.syncId);
+            nodeToUpdate.remove();
+          } else {
+            nodeToUpdate.updateFromJSON(message.node);
+            return;
+          }
         }
         // Insert
         this.createNodeFromMessage(message);
@@ -634,7 +649,7 @@ export class CollabInstance {
           console.error(`Destroy key not found: ${message.node.$.syncId}`);
           return;
         }
-        nodeToDestroy.remove();
+        nodeToDestroy.remove(true);
         break;
       case "cursor":
         this.updatePeerCursor(message);
@@ -663,7 +678,7 @@ export class CollabInstance {
           return;
         }
         this.syncIdToNodeKey.delete(message.node.$.syncId);
-        nodeToDestroy.remove();
+        nodeToDestroy.remove(true);
         break;
       case "updated":
         if (!isSerializedSyncNode(message.node)) {
