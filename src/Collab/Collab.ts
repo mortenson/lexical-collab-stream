@@ -26,6 +26,7 @@ import {
 import { v7 as uuidv7 } from "uuid";
 import { $dfs } from "@lexical/utils";
 import {
+  CursorMessage,
   isPeerMessage,
   isSerializedSyncNode,
   isSyncMessageServer,
@@ -101,7 +102,7 @@ export class CollabInstance {
   cursors: Map<string, CollabCursor>;
   lastCursorMessage?: PeerMessage;
   undoCommandRunning: boolean;
-  shouldReconnect: boolean
+  shouldReconnect: boolean;
 
   constructor(
     userId: string,
@@ -119,9 +120,12 @@ export class CollabInstance {
     this.cursors = new Map();
     this.onCursorsChange = onCursorsChange;
     this.undoCommandRunning = false;
-    this.shouldReconnect = false
+    this.shouldReconnect = false;
   }
 
+  // Splits text nodes into words.
+  // This allows editors to collaborate on the same paragraph without conflict,
+  // especially in cases where clients reconnect (OT has a hard time here).
   wordSplitTransform(node: TextNode): void {
     const text = node.getTextContent();
     if (text.length <= 1) {
@@ -169,10 +173,11 @@ export class CollabInstance {
     }
   }
 
+  // Starts collaboration. Should be called once in a useEffect hook.
   start() {
     clearInterval(this.reconnectInterval);
     clearInterval(this.persistInterval);
-    this.connect()
+    this.connect();
     this.removeListenerCallbacks = [
       // @todo Feels like we could generically support every element type?
       this.editor.registerMutationListener(
@@ -189,119 +194,39 @@ export class CollabInstance {
       ),
       this.editor.registerCommand(
         UNDO_COMMAND,
-        (_) => {
-          const lastStack = this.undoStack.pop();
-          if (!lastStack) {
-            return true;
-          }
-          this.redoStack.push(lastStack);
-          this.undoCommandRunning = true;
-          this.editor.update(
-            () => {
-              lastStack.forEach((m) => this.reverseMessage(m));
-            },
-            { tag: SKIP_DOM_SELECTION_TAG },
-          );
-          return true;
-        },
+        this.undoCommand.bind(this),
         COMMAND_PRIORITY_CRITICAL,
       ),
       this.editor.registerCommand(
         REDO_COMMAND,
-        (_) => {
-          const lastStack = this.redoStack.pop();
-          if (!lastStack) {
-            return true;
-          }
-          this.undoStack.push(lastStack);
-          this.undoCommandRunning = true;
-          this.editor.update(
-            () => {
-              lastStack.forEach((m) => this.applyMessage(m));
-            },
-            { tag: SKIP_DOM_SELECTION_TAG },
-          );
-          return true;
-        },
+        this.redoCommand.bind(this),
         COMMAND_PRIORITY_CRITICAL,
       ),
     ];
 
     this.reconnectInterval = setInterval(() => {
-      if (this.ws && this.ws.readyState === this.ws.CLOSED && this.shouldReconnect) {
-        console.error("websocket closed, reconnecting...");
-        this.connect()
-      }
-    }, 1000);
-
-    this.persistInterval = setInterval(() => {
       if (
         this.ws &&
-        this.ws.readyState === this.ws.OPEN &&
-        this.lastId &&
-        (!this.lastPersistedId || this.lastId !== this.lastPersistedId)
+        this.ws.readyState === this.ws.CLOSED &&
+        this.shouldReconnect
       ) {
-        this.lastPersistedId = this.lastId;
-        this.send({
-          type: "persist-document",
-          lastId: this.lastId,
-          editorState: this.editor.getEditorState().toJSON(),
-        });
+        console.error("websocket closed, reconnecting...");
+        this.connect();
       }
     }, 1000);
 
+    this.persistInterval = setInterval(this.persist.bind(this), 1000);
+
     this.cursorInterval = setInterval(() => {
-      if (this.ws && this.ws.readyState === this.ws.OPEN) {
-        this.editor.read(() => {
-          const selection = $getSelection();
-          if ($isRangeSelection(selection)) {
-            const anchorSyncId = getNodeSyncId(selection.anchor.getNode());
-            const focusSyncId = getNodeSyncId(selection.focus.getNode());
-            if (anchorSyncId && focusSyncId) {
-              const message: PeerMessage = {
-                type: "cursor",
-                lastActivity: Date.now(),
-                userId: this.userId,
-                anchorId: anchorSyncId,
-                anchorOffset: selection.anchor.offset,
-                focusId: focusSyncId,
-                focusOffset: selection.focus.offset,
-              };
-              if (
-                this.lastCursorMessage &&
-                JSON.stringify(message, (key, value) =>
-                  key === "lastActivity" ? 0 : value,
-                ) ===
-                  JSON.stringify(this.lastCursorMessage, (key, value) =>
-                    key === "lastActivity" ? 0 : value,
-                  )
-              ) {
-                return;
-              }
-              this.lastCursorMessage = message;
-              this.send({
-                type: "peer-chunk",
-                messages: [message],
-              });
-            }
-          }
-        });
-      }
-      let cursorsChanged = false;
-      this.cursors.forEach((cursor, userId) => {
-        if (cursor.lastActivity < Date.now() - 1000 * CURSOR_INACTIVITY_LIMIT) {
-          this.cursors.delete(userId);
-          cursorsChanged = true;
-        }
-      });
-      if (cursorsChanged) {
-        this.onCursorsChange(this.cursors);
-      }
+      this.sendCursor();
+      this.cleanupInactiveCursors();
     }, 100);
   }
 
+  // Connects to the remote websocket server.
+  // Can be called multiple times.
   connect() {
-    this.ws?.close()
+    this.ws?.close();
     this.ws = new WebSocket("ws://127.0.0.1:9045");
     this.ws.addEventListener("error", (error) => {
       console.error(error);
@@ -311,23 +236,27 @@ export class CollabInstance {
     this.ws.addEventListener("message", this.onMessage.bind(this));
   }
 
+  // Stops collaboration and unbinds events from the editor.
+  // Should only be called when component unmounts.
   stop() {
-    clearInterval(this.persistInterval)
     clearInterval(this.reconnectInterval);
     clearInterval(this.persistInterval);
-    clearTimeout(this.flushTimer)
+    clearTimeout(this.flushTimer);
+    clearTimeout(this.cursorInterval);
     this.ws?.close();
     this.removeListenerCallbacks.forEach((f) => f());
     this.removeListenerCallbacks = [];
   }
 
+  // Sends a websocket message to the server.
   send(message: SyncMessageClient): void {
     this.ws?.send(JSON.stringify(message));
   }
 
+  // Maps a sync ID (UUID) to a NodeKey.
   mapSyncIdToNodeKey(syncId: string, nodeKey: NodeKey) {
+    // Happens on init, expected.
     if (nodeKey === "root") {
-      console.error(`Attempted to record root ID ${syncId} => ${nodeKey}`);
       return;
     }
     if (syncId === SYNC_ID_UNSET) {
@@ -338,6 +267,7 @@ export class CollabInstance {
     this.nodeKeyToSyncId.set(nodeKey, syncId);
   }
 
+  // Populates our UUID <=> NodeKey maps after initializing editor state.
   populateSyncIdMap() {
     this.editor.read(() => {
       $dfs().forEach((dfsNode) => {
@@ -352,6 +282,7 @@ export class CollabInstance {
     });
   }
 
+  // Fetches a node by its sync ID.
   getNodeBySyncId(syncId: string): LexicalNode | undefined {
     const nodeKey = this.syncIdToNodeKey.get(syncId);
     if (!nodeKey) {
@@ -364,6 +295,8 @@ export class CollabInstance {
     return node;
   }
 
+  // Sends our stack of messages to the server.
+  // This allows for flexible batches of messages and offline editing.
   flushStack() {
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
@@ -422,14 +355,15 @@ export class CollabInstance {
     }, 50);
   }
 
-  updateCursor(
-    userId: string,
-    anchorId: string,
-    anchorOffset: number,
-    focusId: string,
-    focusOffset: number,
-    lastActivity: number,
-  ) {
+  // Updates our cursor for a peer based on an incoming message.
+  updatePeerCursor({
+    userId,
+    anchorId,
+    anchorOffset,
+    focusId,
+    focusOffset,
+    lastActivity,
+  }: CursorMessage) {
     const anchorKey = this.getNodeBySyncId(anchorId)?.getKey();
     const focusKey = this.getNodeBySyncId(focusId)?.getKey();
     if (!anchorKey || !focusKey) {
@@ -455,6 +389,7 @@ export class CollabInstance {
     this.onCursorsChange(this.cursors);
   }
 
+  // Responds to mutation events in nodes to send our mutations to peers.
   onMutation(
     nodes: Map<NodeKey, NodeMutation>,
     {
@@ -550,6 +485,8 @@ export class CollabInstance {
             this.messageStack.push({
               type: "destroyed",
               userId: this.userId,
+              // Storing the destroyed node's JSON supports undo, and probably
+              // some conflict resolution in clients in the future.
               // @ts-ignore
               node: exportNonLatestJSON(node),
               previousId: node.__prev
@@ -566,6 +503,7 @@ export class CollabInstance {
     });
   }
 
+  // Responds to incoming websocket messages, often broadcast from peers.
   onMessage(wsMessage: MessageEvent) {
     this.editor.update(
       () => {
@@ -576,6 +514,7 @@ export class CollabInstance {
           );
           return;
         }
+        // The server sends up this event time we connect.
         if (serverMessage.type === "init") {
           // We've reconnected, don't want to override our editor state.
           if (this.lastId) {
@@ -584,7 +523,7 @@ export class CollabInstance {
               userId: this.userId,
               lastId: this.lastId,
             });
-            return
+            return;
           }
           this.lastId = serverMessage.lastId;
           const editorState = this.editor.parseEditorState(
@@ -636,6 +575,7 @@ export class CollabInstance {
     );
   }
 
+  // Applies peer mutations to local editor state.
   applyMessage(message: PeerMessage) {
     switch (message.type) {
       case "created":
@@ -670,14 +610,7 @@ export class CollabInstance {
         nodeToDestroy.remove(true);
         break;
       case "cursor":
-        this.updateCursor(
-          message.userId,
-          message.anchorId,
-          message.anchorOffset,
-          message.focusId,
-          message.focusOffset,
-          message.lastActivity,
-        );
+        this.updatePeerCursor(message);
         break;
       default:
         console.error(`Unknown message type: ${JSON.stringify(message)}`);
@@ -685,7 +618,7 @@ export class CollabInstance {
     }
   }
 
-  // Attempts to undo an applyMessage operation
+  // Attempts to undo an applyMessage operation.
   reverseMessage(message: PeerMessage) {
     switch (message.type) {
       case "created":
@@ -731,6 +664,8 @@ export class CollabInstance {
     }
   }
 
+  // Creates a node for a peer message.
+  // @todo How can we generically support all node types?
   createNodeFromMessage(message: NodeMessageBase) {
     let messageNode;
     switch (message.node.type) {
@@ -781,12 +716,123 @@ export class CollabInstance {
     }
   }
 
+  // Support undo by undoing our previous sends to the server.
+  // @todo This doesn't work (well?) when offline editing
+  undoCommand() {
+    const lastStack = this.undoStack.pop();
+    if (!lastStack) {
+      return true;
+    }
+    this.redoStack.push(lastStack);
+    this.undoCommandRunning = true;
+    this.editor.update(
+      () => {
+        lastStack.forEach((m) => this.reverseMessage(m));
+      },
+      { tag: SKIP_DOM_SELECTION_TAG },
+    );
+    return true;
+  }
+
+  // Support redo by attempting to re-apply the last undo'd stack.
+  redoCommand() {
+    const lastStack = this.redoStack.pop();
+    if (!lastStack) {
+      return true;
+    }
+    this.undoStack.push(lastStack);
+    this.undoCommandRunning = true;
+    this.editor.update(
+      () => {
+        lastStack.forEach((m) => this.applyMessage(m));
+      },
+      { tag: SKIP_DOM_SELECTION_TAG },
+    );
+    return true;
+  }
+
+  // Persists our editor state if possible.
+  // @todo all clients don't _need_ to do this, but doesn't seem too harmful
+  // and the server could use this to track desyncs between clients on the
+  // same stream ID (lastId).
+  persist() {
+    if (
+      this.ws &&
+      this.ws.readyState === this.ws.OPEN &&
+      this.lastId &&
+      (!this.lastPersistedId || this.lastId !== this.lastPersistedId)
+    ) {
+      this.lastPersistedId = this.lastId;
+      this.send({
+        type: "persist-document",
+        lastId: this.lastId,
+        editorState: this.editor.getEditorState().toJSON(),
+      });
+    }
+  }
+
+  // Sends our local cursor position to peers.
+  sendCursor() {
+    if (!this.ws || this.ws.readyState !== this.ws.OPEN) {
+      return;
+    }
+    this.editor.read(() => {
+      const selection = $getSelection();
+      if ($isRangeSelection(selection)) {
+        const anchorSyncId = getNodeSyncId(selection.anchor.getNode());
+        const focusSyncId = getNodeSyncId(selection.focus.getNode());
+        if (anchorSyncId && focusSyncId) {
+          const message: PeerMessage = {
+            type: "cursor",
+            lastActivity: Date.now(),
+            userId: this.userId,
+            anchorId: anchorSyncId,
+            anchorOffset: selection.anchor.offset,
+            focusId: focusSyncId,
+            focusOffset: selection.focus.offset,
+          };
+          if (
+            this.lastCursorMessage &&
+            JSON.stringify(message, (key, value) =>
+              key === "lastActivity" ? 0 : value,
+            ) ===
+              JSON.stringify(this.lastCursorMessage, (key, value) =>
+                key === "lastActivity" ? 0 : value,
+              )
+          ) {
+            return;
+          }
+          this.lastCursorMessage = message;
+          this.send({
+            type: "peer-chunk",
+            messages: [message],
+          });
+        }
+      }
+    });
+  }
+
+  // Removes peer cursors if left inactive.
+  cleanupInactiveCursors() {
+    let cursorsChanged = false;
+    this.cursors.forEach((cursor, userId) => {
+      if (cursor.lastActivity < Date.now() - 1000 * CURSOR_INACTIVITY_LIMIT) {
+        this.cursors.delete(userId);
+        cursorsChanged = true;
+      }
+    });
+    if (cursorsChanged) {
+      this.onCursorsChange(this.cursors);
+    }
+  }
+
+  // Debug utilities to test offline syncing.
   debugDisconnect() {
-    this.shouldReconnect = false
-    this.ws?.close()
+    this.shouldReconnect = false;
+    this.ws?.close();
   }
 
   debugReconnect() {
-    this.shouldReconnect = true
+    this.shouldReconnect = true;
   }
 }

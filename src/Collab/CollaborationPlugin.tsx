@@ -6,7 +6,7 @@ export default function CollaborationPlugin() {
   const [editor] = useLexicalComposerContext();
   const [cursors, setCursors] = useState<Map<string, CollabCursor>>();
   const [connected, setConnected] = useState(true);
-  const collab = useRef<CollabInstance>()
+  const collab = useRef<CollabInstance>();
   useEffect(() => {
     editor.setEditable(false);
     const userId = "user_" + Math.floor(Math.random() * 100);
@@ -21,14 +21,14 @@ export default function CollaborationPlugin() {
       <button
         onClick={() => {
           if (connected) {
-            collab.current?.debugDisconnect()
+            collab.current?.debugDisconnect();
           } else {
-            collab.current?.debugReconnect()
+            collab.current?.debugReconnect();
           }
-          setConnected(!connected)
+          setConnected(!connected);
         }}
       >
-        {connected ? 'Disconnect': 'Connect'}
+        {connected ? "Disconnect" : "Connect"}
       </button>
       {cursors &&
         Array.from(cursors.entries()).map(([userId, cursor]) => {

@@ -55,7 +55,7 @@ interface PersistDocumentMessage {
   editorState: SerializedEditorState;
 }
 
-interface CursorMessage {
+export interface CursorMessage {
   type: "cursor";
   lastActivity: number; // Date.now()
   userId: string;
