@@ -24,7 +24,7 @@ import {
   UNDO_COMMAND,
 } from "lexical";
 import { v7 as uuidv7 } from "uuid";
-import { $dfs } from "@lexical/utils";
+import { $dfs, mergeRegister } from "@lexical/utils";
 import {
   CursorMessage,
   isPeerMessage,
@@ -49,6 +49,8 @@ export type CollabCursor = {
 };
 
 type CursorListener = (cursors: Map<string, CollabCursor>) => void;
+
+type DesyncListener = () => void;
 
 const compareRedisStreamIds = (a: string, b: string): number => {
   return parseInt(a.split("-")[0]) - parseInt(b.split("-")[0]);
@@ -87,7 +89,7 @@ export class CollabInstance {
   nodeKeyToSyncId: Map<NodeKey, string>;
   editor: LexicalEditor;
   ws?: WebSocket;
-  removeListenerCallbacks: (() => void)[];
+  tearDownListeners: () => void;
   reconnectInterval?: NodeJS.Timeout;
   persistInterval?: NodeJS.Timeout;
   cursorInterval?: NodeJS.Timeout;
@@ -99,6 +101,7 @@ export class CollabInstance {
   undoStack: PeerMessage[][];
   redoStack: PeerMessage[][];
   onCursorsChange: CursorListener;
+  onDesync: DesyncListener;
   cursors: Map<string, CollabCursor>;
   lastCursorMessage?: PeerMessage;
   undoCommandRunning: boolean;
@@ -108,6 +111,7 @@ export class CollabInstance {
     userId: string,
     editor: LexicalEditor,
     onCursorsChange: CursorListener,
+    onDesync: DesyncListener,
   ) {
     this.editor = editor;
     this.userId = userId;
@@ -116,11 +120,12 @@ export class CollabInstance {
     this.messageStack = [];
     this.undoStack = [];
     this.redoStack = [];
-    this.removeListenerCallbacks = [];
     this.cursors = new Map();
     this.onCursorsChange = onCursorsChange;
+    this.onDesync = onDesync;
     this.undoCommandRunning = false;
     this.shouldReconnect = false;
+    this.tearDownListeners = () => {};
   }
 
   // Splits text nodes into words.
@@ -178,7 +183,7 @@ export class CollabInstance {
     clearInterval(this.reconnectInterval);
     clearInterval(this.persistInterval);
     this.connect();
-    this.removeListenerCallbacks = [
+    this.tearDownListeners = mergeRegister(
       // @todo Feels like we could generically support every element type?
       this.editor.registerMutationListener(
         ParagraphNode,
@@ -202,7 +207,7 @@ export class CollabInstance {
         this.redoCommand.bind(this),
         COMMAND_PRIORITY_CRITICAL,
       ),
-    ];
+    );
 
     this.reconnectInterval = setInterval(() => {
       if (
@@ -244,8 +249,7 @@ export class CollabInstance {
     clearTimeout(this.flushTimer);
     clearTimeout(this.cursorInterval);
     this.ws?.close();
-    this.removeListenerCallbacks.forEach((f) => f());
-    this.removeListenerCallbacks = [];
+    this.tearDownListeners();
   }
 
   // Sends a websocket message to the server.
@@ -312,37 +316,45 @@ export class CollabInstance {
       let stack = this.messageStack;
       this.messageStack = [];
       // Flatten the stack to avoid sending duplicative messages.
-      const messageMap: Map<string, PeerMessage> = new Map();
-      stack.forEach((m) => {
+      const messageMap: Map<string, [PeerMessage, number]> = new Map();
+      const destroyedList: string[] = [];
+      stack.forEach((m, i) => {
         let existing;
         switch (m.type) {
           case "cursor":
-            messageMap.set("cursor", m);
+            messageMap.set("cursor", [m, i]);
             break;
           // todo: remove all messages for children of destroyed nodes
           case "destroyed":
             existing = messageMap.get(m.node.$.syncId);
             // No reason to tell peers to delete a node we created.
-            if (existing && existing.type === "created") {
+            if (existing && existing[0].type === "created") {
               messageMap.delete(m.node.$.syncId);
             } else {
-              messageMap.set(m.node.$.syncId, m);
+              destroyedList.push(m.node.$.syncId);
+              messageMap.set(m.node.$.syncId, [m, i]);
             }
             break;
           case "created":
           case "updated":
             existing = messageMap.get(m.node.$.syncId);
-            if (existing && existing.type === "created") {
+            if (existing && existing[0].type === "created") {
               // Better to just update the created message with updated node
-              existing.node = m.node;
+              existing[0].node = m.node;
               messageMap.set(m.node.$.syncId, existing);
-            } else if (!existing || existing?.type !== "destroyed") {
-              messageMap.set(m.node.$.syncId, m);
+            } else if (
+              !existing ||
+              (existing && existing[0].type !== "destroyed")
+            ) {
+              messageMap.set(m.node.$.syncId, [m, i]);
             }
             break;
         }
       });
-      const flatStack = Array.from(messageMap.values());
+      // Restore original order.
+      const flatStack = Array.from(messageMap.values())
+        .sort((a, b) => a[1] - b[1])
+        .map((a) => a[0]);
       if (!this.undoCommandRunning) {
         this.undoStack.push(flatStack);
       } else {
@@ -516,8 +528,23 @@ export class CollabInstance {
         }
         // The server sends up this event time we connect.
         if (serverMessage.type === "init") {
-          // We've reconnected, don't want to override our editor state.
+          // We've reconnected, but don't want to override our editor state.
           if (this.lastId) {
+            // Our last stream ID is older than the first message in the Redis
+            // stream. We've been garbage collected!
+            if (
+              serverMessage.firstId &&
+              compareRedisStreamIds(serverMessage.firstId, this.lastId) > 0
+            ) {
+              this.shouldReconnect = false;
+              this.ws?.close();
+              // @todo I think there are strategies we could choose to take
+              // here, but it does require some UI choices so punting for now.
+              // example options the user could choose in a UI:
+              //   1. Keep all the nodes I touched offline the same
+              //   2. Override local changes with remote editor state
+              this.onDesync();
+            }
             this.send({
               type: "init-received",
               userId: this.userId,
@@ -607,7 +634,7 @@ export class CollabInstance {
           console.error(`Destroy key not found: ${message.node.$.syncId}`);
           return;
         }
-        nodeToDestroy.remove(true);
+        nodeToDestroy.remove();
         break;
       case "cursor":
         this.updatePeerCursor(message);

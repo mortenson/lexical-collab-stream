@@ -474,3 +474,11 @@ i.justify-align {
   background: #d6ffce;
   font-size: 12px;
 }
+
+.desync-warning {
+  font-size: 16px;
+  padding: 10px 15px;
+  background: rgb(238, 136, 136);
+  border-radius: 5px;
+  margin: 10px 0;
+}

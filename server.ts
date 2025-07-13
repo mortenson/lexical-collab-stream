@@ -17,6 +17,8 @@ const defaultDocumentId = "documentId";
 const STREAM_COUNT = "10";
 // The time between stream reads per client in milliseconds
 const STREAM_DELAY_MS = 250;
+// The max length of the stream. Set this to a low number to test desync.
+const STREAM_MAXLEN = "10000";
 
 console.log("Connecting to Redis...");
 const redis = new Redis();
@@ -76,15 +78,17 @@ const setDocument = (
 type RedisStreamChunk = {
   messages: PeerMessage[];
   lastId: string;
+  firstId: string;
 };
 
 const readStreamChunk = async (
   documentId: string,
   lastId: string,
+  count: string,
 ): Promise<null | RedisStreamChunk> => {
   const results = await redis.xread(
     "COUNT",
-    STREAM_COUNT,
+    count,
     "STREAMS",
     `streams:${documentId}`,
     lastId,
@@ -111,6 +115,7 @@ const readStreamChunk = async (
   return {
     messages: messages,
     lastId: messagesRaw[messagesRaw.length - 1][0],
+    firstId: messagesRaw[0][0],
   };
 };
 
@@ -120,6 +125,9 @@ const addtoStream = async (
 ): Promise<string | null> => {
   return redis.xadd(
     `streams:${documentId}`,
+    "MAXLEN",
+    "~",
+    STREAM_MAXLEN,
     "*",
     "message",
     JSON.stringify(message),
@@ -134,10 +142,12 @@ const sendMessage = (ws: WebSocket, message: SyncMessageServer) => {
 
 const sendInitMessage = async (ws: WebSocket, documentId: string) => {
   const document = await getDocument(documentId);
+  const chunk = await readStreamChunk(documentId, "0", "1");
   sendMessage(ws, {
     type: "init",
     editorState: document.editorState,
     lastId: document.lastId,
+    firstId: chunk?.firstId,
   });
 };
 
@@ -148,7 +158,7 @@ const listenForMessage = async (
   documentId: string,
   lastId: string,
 ) => {
-  const chunk = await readStreamChunk(documentId, lastId);
+  const chunk = await readStreamChunk(documentId, lastId, STREAM_COUNT);
   if (!chunk || chunk.messages.length === 0) {
     await delay(STREAM_DELAY_MS);
     await listenForMessage(ws, documentId, lastId);

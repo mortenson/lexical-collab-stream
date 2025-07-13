@@ -39,6 +39,7 @@ interface DestroyedMessage extends NodeMessageBase {
 
 interface InitMessage {
   lastId: string;
+  firstId?: string;
   type: "init";
   editorState: SerializedEditorState;
 }

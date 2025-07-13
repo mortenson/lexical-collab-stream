@@ -6,18 +6,27 @@ export default function CollaborationPlugin() {
   const [editor] = useLexicalComposerContext();
   const [cursors, setCursors] = useState<Map<string, CollabCursor>>();
   const [connected, setConnected] = useState(true);
+  const [desynced, setDesynced] = useState(false);
   const collab = useRef<CollabInstance>();
   useEffect(() => {
     editor.setEditable(false);
     const userId = "user_" + Math.floor(Math.random() * 100);
-    collab.current = new CollabInstance(userId, editor, (cursors) => {
-      setCursors(new Map(cursors));
-    });
+    collab.current = new CollabInstance(
+      userId,
+      editor,
+      (cursors) => setCursors(new Map(cursors)),
+      () => setDesynced(true),
+    );
     collab.current.start();
     return () => collab.current?.stop();
   }, [editor]);
   return (
     <>
+      {desynced && (
+        <div className="desync-warning">
+          Your editor is too far behind the remote stream to catch up!
+        </div>
+      )}
       <button
         onClick={() => {
           if (connected) {
