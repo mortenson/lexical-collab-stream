@@ -1,16 +1,13 @@
 import {
-  $createParagraphNode,
   $createTextNode,
   $getNodeByKey,
-  $getRoot,
   $getSelection,
   $getState,
-  $isElementNode,
+  $hasUpdateTag,
   $isRangeSelection,
   $onUpdate,
   $setState,
   COMMAND_PRIORITY_CRITICAL,
-  createState,
   EditorState,
   LexicalEditor,
   LexicalNode,
@@ -26,67 +23,47 @@ import {
 import { v7 as uuidv7 } from "uuid";
 import { $dfs, mergeRegister } from "@lexical/utils";
 import {
-  CursorMessage,
+  compareRedisStreamIds,
   isPeerMessage,
-  isSerializedSyncNode,
   isSyncMessageServer,
-  NodeMessageBase,
   PeerMessage,
   SyncMessageClient,
   SyncMessageServer,
 } from "./Messages";
+import { $getNodeBySyncId, SyncIdMap } from "./SyncIdMap";
+import { $getNodeSyncId, SYNC_ID_UNSET, syncIdState } from "./nodeState";
+import {
+  $applyCreatedMessage,
+  $createCreatedMessage,
+  $createNodeMessageBase,
+  $reverseCreatedMessage,
+} from "./create";
+import {
+  $applyUpdatedMessage,
+  $createUpdatedMessage,
+  $reverseUpdatedMessage,
+} from "./update";
+import {
+  $applyDestroyedMessage,
+  $createDestroyedMessage,
+  $reverseDestroyedMessage,
+} from "./destroy";
+import {
+  $updatePeerCursor,
+  CollabCursor,
+  CURSOR_INACTIVITY_LIMIT,
+} from "./cursor";
 
 const SYNC_TAG = "SYNC_TAG";
 
-const CURSOR_INACTIVITY_LIMIT = 10; // seconds
-
-export type CollabCursor = {
-  lastActivity: number;
-  anchorElement: HTMLElement;
-  anchorOffset: number;
-  focusElement: HTMLElement;
-  focusOffset: number;
-};
+const SYNC_UNDO_TAG = "SYNC_UNDO_TAG";
 
 type CursorListener = (cursors: Map<string, CollabCursor>) => void;
 
 type DesyncListener = () => void;
 
-const compareRedisStreamIds = (a: string, b: string): number => {
-  return parseInt(a.split("-")[0]) - parseInt(b.split("-")[0]);
-};
-
-const SYNC_ID_UNSET = "SYNC_ID_UNSET";
-
-const syncIdState = createState("syncId", {
-  parse: (v) => (typeof v === "string" ? v : SYNC_ID_UNSET),
-});
-
-const getNodeSyncId = (node: LexicalNode): string | undefined => {
-  const syncId = $getState(node, syncIdState);
-  if (syncId === SYNC_ID_UNSET) {
-    return;
-  }
-  return syncId;
-};
-
-// Allows JSON exporting for a node that isn't in the editor state.
-// This is, uh, pretty gross since it overrides getLatest(), but I think the
-// alternative is keeping a Map of destroyed NodeKeys to JSON which seems worse
-const exportNonLatestJSON = (node: LexicalNode): SerializedLexicalNode => {
-  const proto = Object.getPrototypeOf(node);
-  const oldGetLatest = proto.getLatest;
-  proto.getLatest = function () {
-    return this;
-  };
-  const json = node.exportJSON();
-  proto.getLatest = oldGetLatest;
-  return json;
-};
-
 export class CollabInstance {
-  syncIdToNodeKey: Map<string, NodeKey>;
-  nodeKeyToSyncId: Map<NodeKey, string>;
+  syncIdMap: SyncIdMap;
   editor: LexicalEditor;
   ws?: WebSocket;
   tearDownListeners: () => void;
@@ -115,8 +92,7 @@ export class CollabInstance {
   ) {
     this.editor = editor;
     this.userId = userId;
-    this.syncIdToNodeKey = new Map();
-    this.nodeKeyToSyncId = new Map();
+    this.syncIdMap = new SyncIdMap();
     this.messageStack = [];
     this.undoStack = [];
     this.redoStack = [];
@@ -148,7 +124,7 @@ export class CollabInstance {
       spaceNode.toggleUnmergeable();
     }
     const spaceNodeId = uuidv7();
-    this.mapSyncIdToNodeKey(spaceNode.getKey(), spaceNodeId);
+    this.syncIdMap.set(spaceNode.getKey(), spaceNodeId);
     $setState(spaceNode, syncIdState, spaceNodeId);
     if (leftSide.length !== 0) {
       node.setTextContent(leftSide);
@@ -160,7 +136,7 @@ export class CollabInstance {
     if (rightSide.length !== 0) {
       const rightSideNode = $createTextNode(rightSide);
       const rightSideNodeId = uuidv7();
-      this.mapSyncIdToNodeKey(rightSideNode.getKey(), rightSideNodeId);
+      this.syncIdMap.set(rightSideNode.getKey(), rightSideNodeId);
       $setState(rightSideNode, syncIdState, rightSideNodeId);
       spaceNode.insertAfter(rightSideNode);
     }
@@ -182,6 +158,8 @@ export class CollabInstance {
   start() {
     clearInterval(this.reconnectInterval);
     clearInterval(this.persistInterval);
+    clearInterval(this.cursorInterval);
+    clearTimeout(this.flushTimer);
     this.connect();
     this.tearDownListeners = mergeRegister(
       // @todo Feels like we could generically support every element type?
@@ -246,8 +224,8 @@ export class CollabInstance {
   stop() {
     clearInterval(this.reconnectInterval);
     clearInterval(this.persistInterval);
+    clearInterval(this.cursorInterval);
     clearTimeout(this.flushTimer);
-    clearTimeout(this.cursorInterval);
     this.ws?.close();
     this.tearDownListeners();
   }
@@ -257,20 +235,6 @@ export class CollabInstance {
     this.ws?.send(JSON.stringify(message));
   }
 
-  // Maps a sync ID (UUID) to a NodeKey.
-  mapSyncIdToNodeKey(syncId: string, nodeKey: NodeKey) {
-    // Happens on init, expected.
-    if (nodeKey === "root") {
-      return;
-    }
-    if (syncId === SYNC_ID_UNSET) {
-      console.error(`Attempted to set default value ${syncId} => ${nodeKey}`);
-      return;
-    }
-    this.syncIdToNodeKey.set(syncId, nodeKey);
-    this.nodeKeyToSyncId.set(nodeKey, syncId);
-  }
-
   // Populates our UUID <=> NodeKey maps after initializing editor state.
   populateSyncIdMap() {
     this.editor.read(() => {
@@ -278,7 +242,7 @@ export class CollabInstance {
         if (dfsNode.node.getKey() === "root") {
           return;
         }
-        this.mapSyncIdToNodeKey(
+        this.syncIdMap.set(
           $getState(dfsNode.node, syncIdState),
           dfsNode.node.getKey(),
         );
@@ -286,17 +250,11 @@ export class CollabInstance {
     });
   }
 
-  // Fetches a node by its sync ID.
-  getNodeBySyncId(syncId: string): LexicalNode | undefined {
-    const nodeKey = this.syncIdToNodeKey.get(syncId);
-    if (!nodeKey) {
-      return;
+  appendMessagesToStack(messages: PeerMessage[], updateTags: Set<string>) {
+    if (!updateTags.has(SYNC_UNDO_TAG)) {
+      this.undoStack.push(messages);
     }
-    const node = $getNodeByKey(nodeKey);
-    if (!node) {
-      return;
-    }
-    return node;
+    this.messageStack.push(...messages);
   }
 
   // Sends our stack of messages to the server.
@@ -316,6 +274,7 @@ export class CollabInstance {
       let stack = this.messageStack;
       this.messageStack = [];
       // Flatten the stack to avoid sending duplicative messages.
+      // @todo this actually makes undo pretty shitty
       const messageMap: Map<string, [PeerMessage, number]> = new Map();
       const destroyedList: string[] = [];
       stack.forEach((m, i) => {
@@ -354,51 +313,19 @@ export class CollabInstance {
       // Restore original order.
       const flatStack = Array.from(messageMap.values())
         .sort((a, b) => a[1] - b[1])
-        .map((a) => a[0]);
-      if (!this.undoCommandRunning) {
-        this.undoStack.push(flatStack);
-      } else {
-        this.undoCommandRunning = false;
-      }
+        .map((a) => a[0])
+        // Filter out nodes that would be deleted by their parent anyway.
+        .filter(
+          (m) =>
+            m.type === "cursor" ||
+            !m.parentId ||
+            !destroyedList.includes(m.parentId),
+        );
       this.send({
         type: "peer-chunk",
         messages: flatStack,
       });
     }, 50);
-  }
-
-  // Updates our cursor for a peer based on an incoming message.
-  updatePeerCursor({
-    userId,
-    anchorId,
-    anchorOffset,
-    focusId,
-    focusOffset,
-    lastActivity,
-  }: CursorMessage) {
-    const anchorKey = this.getNodeBySyncId(anchorId)?.getKey();
-    const focusKey = this.getNodeBySyncId(focusId)?.getKey();
-    if (!anchorKey || !focusKey) {
-      return;
-    }
-    const anchorElement = this.editor.getElementByKey(anchorKey);
-    const focusElement = this.editor.getElementByKey(focusKey);
-    if (
-      !anchorElement ||
-      !focusElement ||
-      lastActivity < Date.now() - 1000 * CURSOR_INACTIVITY_LIMIT
-    ) {
-      this.cursors.delete(userId);
-    } else {
-      this.cursors.set(userId, {
-        lastActivity,
-        anchorElement,
-        focusElement,
-        anchorOffset,
-        focusOffset,
-      });
-    }
-    this.onCursorsChange(this.cursors);
   }
 
   // Responds to mutation events in nodes to send our mutations to peers.
@@ -428,14 +355,14 @@ export class CollabInstance {
                 return;
               }
               let syncId = $getState(node, syncIdState);
-              const mappedNode = this.getNodeBySyncId(syncId);
+              const mappedNode = $getNodeBySyncId(this.syncIdMap, syncId);
               // Brand new node or cloned node.
               if (
                 syncId === SYNC_ID_UNSET ||
                 (mappedNode && mappedNode.getKey() != node.getKey())
               ) {
                 syncId = uuidv7();
-                this.mapSyncIdToNodeKey(syncId, node.getKey());
+                this.syncIdMap.set(syncId, node.getKey());
                 $setState(node.getWritable(), syncIdState, syncId);
                 return;
               }
@@ -446,71 +373,39 @@ export class CollabInstance {
       { tag: [SYNC_TAG, SKIP_DOM_SELECTION_TAG] },
     );
     this.editor.read(() => {
+      const messages: PeerMessage[] = [];
       nodes.forEach((mutation, nodeKey) => {
-        let previous, parent, node, syncId;
+        let message;
         switch (mutation) {
           case "created":
+            message = $createCreatedMessage(
+              this.syncIdMap,
+              nodeKey,
+              this.userId,
+            );
+            break;
           case "updated":
-            node = $getNodeByKey(nodeKey);
-            if (!node) {
-              console.error(`Node not found ${nodeKey}`);
-              return;
-            }
-            syncId = $getState(node, syncIdState);
-            if (syncId === SYNC_ID_UNSET) {
-              console.error(`Node does not have sync ID ${nodeKey}`);
-              return;
-            }
-            this.mapSyncIdToNodeKey(syncId, nodeKey);
-            previous = node.getPreviousSibling();
-            parent = node.getParent();
-            const previousNode = $getNodeByKey(nodeKey, prevEditorState);
-            this.messageStack.push({
-              type: mutation,
-              userId: this.userId,
-              // @ts-ignore
-              node: node.exportJSON(),
-              previousId: previous ? getNodeSyncId(previous) : undefined,
-              parentId: parent ? getNodeSyncId(parent) : undefined,
-              ...(mutation === "updated" && previousNode
-                ? {
-                    previousNode: exportNonLatestJSON(previousNode),
-                  }
-                : {}),
-            });
+            message = $createUpdatedMessage(
+              this.syncIdMap,
+              prevEditorState,
+              nodeKey,
+              this.userId,
+            );
             break;
           case "destroyed":
-            syncId = this.nodeKeyToSyncId.get(nodeKey);
-            if (!syncId) {
-              console.error(
-                `Node key never mapped for destroy message: ${nodeKey}`,
-              );
-              return;
-            }
-            node = $getNodeByKey(nodeKey, prevEditorState);
-            if (!node) {
-              console.error(
-                `Destroyed node not found in previous editor state ${nodeKey}`,
-              );
-              return;
-            }
-            this.messageStack.push({
-              type: "destroyed",
-              userId: this.userId,
-              // Storing the destroyed node's JSON supports undo, and probably
-              // some conflict resolution in clients in the future.
-              // @ts-ignore
-              node: exportNonLatestJSON(node),
-              previousId: node.__prev
-                ? this.nodeKeyToSyncId.get(node.__prev)
-                : undefined,
-              parentId: node.__parent
-                ? this.nodeKeyToSyncId.get(node.__parent)
-                : undefined,
-            });
+            message = $createDestroyedMessage(
+              this.syncIdMap,
+              prevEditorState,
+              nodeKey,
+              this.userId,
+            );
             break;
         }
+        if (message) {
+          messages.push(message);
+        }
       });
+      this.appendMessagesToStack(messages, updateTags);
       this.flushStack();
     });
   }
@@ -526,9 +421,9 @@ export class CollabInstance {
           );
           return;
         }
-        // The server sends up this event time we connect.
+        // The server sends us this event every time we connect.
         if (serverMessage.type === "init") {
-          // We've reconnected, but don't want to override our editor state.
+          // lastId being set implies that this is a re-connect
           if (this.lastId) {
             // Our last stream ID is older than the first message in the Redis
             // stream. We've been garbage collected!
@@ -544,30 +439,30 @@ export class CollabInstance {
               //   1. Keep all the nodes I touched offline the same
               //   2. Override local changes with remote editor state
               this.onDesync();
+              // Short circuit since we can't stream anyway.
+              return;
             }
-            this.send({
-              type: "init-received",
-              userId: this.userId,
-              lastId: this.lastId,
-            });
-            return;
+          } else {
+            // This is our first time connecting.
+            this.lastId = serverMessage.lastId;
+            const editorState = this.editor.parseEditorState(
+              serverMessage.editorState,
+            );
+            // Avoids an exception in lexical.
+            if (!editorState.isEmpty()) {
+              this.editor.setEditorState(editorState, {
+                tag: SYNC_TAG,
+              });
+            }
+            this.editor.setEditable(true);
+            $onUpdate(() => this.populateSyncIdMap());
           }
-          this.lastId = serverMessage.lastId;
-          const editorState = this.editor.parseEditorState(
-            serverMessage.editorState,
-          );
-          if (!editorState.isEmpty()) {
-            this.editor.setEditorState(editorState, {
-              tag: SYNC_TAG,
-            });
-          }
+          // ACK the init to start streaming messages from lastId.
           this.send({
             type: "init-received",
             userId: this.userId,
-            lastId: serverMessage.lastId,
+            lastId: this.lastId,
           });
-          this.editor.setEditable(true);
-          $onUpdate(() => this.populateSyncIdMap());
           return;
         }
         serverMessage.messages.forEach((message) => {
@@ -576,17 +471,6 @@ export class CollabInstance {
               `Non-peer message sent from server: ${wsMessage.data}`,
             );
             return;
-          }
-          // Ignore and log when incoming redis ID is in the past.
-          if (message.type != "cursor") {
-            if (
-              this.lastId &&
-              message.streamId &&
-              compareRedisStreamIds(this.lastId, message.streamId) > 0
-            ) {
-              console.error(`Out of order message detected: ${wsMessage.data}`);
-              return;
-            }
           }
           // Ignore messages (probably) sent by us.
           if (message.userId === this.userId) {
@@ -606,53 +490,27 @@ export class CollabInstance {
   applyMessage(message: PeerMessage) {
     switch (message.type) {
       case "created":
+        if (message.streamId) {
+          this.lastId = message.streamId;
+        }
+        $applyCreatedMessage(this.syncIdMap, message);
+        break;
       case "updated":
         if (message.streamId) {
           this.lastId = message.streamId;
         }
-        if (!isSerializedSyncNode(message.node)) {
-          console.error(
-            `Node is of unknown type: ${JSON.stringify(message.node)}`,
-          );
-          return;
-        }
-        // Update
-        const nodeToUpdate = this.getNodeBySyncId(message.node.$.syncId);
-        if (nodeToUpdate) {
-          const parent = nodeToUpdate.getParent();
-          const parentSyncId = parent
-            ? $getState(parent, syncIdState)
-            : SYNC_ID_UNSET;
-          if (
-            parentSyncId !== SYNC_ID_UNSET &&
-            message.parentId &&
-            parentSyncId !== message.parentId
-          ) {
-            // The node moved, we should remove it, then treat it as a create.
-            this.nodeKeyToSyncId.delete(nodeToUpdate.getKey());
-            this.syncIdToNodeKey.delete(message.node.$.syncId);
-            nodeToUpdate.remove();
-          } else {
-            nodeToUpdate.updateFromJSON(message.node);
-            return;
-          }
-        }
-        // Insert
-        this.createNodeFromMessage(message);
+        $applyUpdatedMessage(this.syncIdMap, message);
         break;
       case "destroyed":
         if (message.streamId) {
           this.lastId = message.streamId;
         }
-        const nodeToDestroy = this.getNodeBySyncId(message.node.$.syncId);
-        if (!nodeToDestroy) {
-          console.error(`Destroy key not found: ${message.node.$.syncId}`);
-          return;
-        }
-        nodeToDestroy.remove(true);
+        $applyDestroyedMessage(this.syncIdMap, message);
         break;
       case "cursor":
-        this.updatePeerCursor(message);
+        if ($updatePeerCursor(this.syncIdMap, this.cursors, message)) {
+          this.onCursorsChange(this.cursors);
+        }
         break;
       default:
         console.error(`Unknown message type: ${JSON.stringify(message)}`);
@@ -664,38 +522,13 @@ export class CollabInstance {
   reverseMessage(message: PeerMessage) {
     switch (message.type) {
       case "created":
-        if (!isSerializedSyncNode(message.node)) {
-          console.error(
-            `Node is of unknown type: ${JSON.stringify(message.node)}`,
-          );
-          return;
-        }
-        const nodeToDestroy = this.getNodeBySyncId(message.node.$.syncId);
-        if (!nodeToDestroy) {
-          console.error(
-            "Attempted to reverse create operation but node does not exist",
-          );
-          return;
-        }
-        this.syncIdToNodeKey.delete(message.node.$.syncId);
-        nodeToDestroy.remove(true);
+        $reverseCreatedMessage(this.syncIdMap, message);
         break;
       case "updated":
-        if (!isSerializedSyncNode(message.node)) {
-          console.error(
-            `Node is of unknown type: ${JSON.stringify(message.node)}`,
-          );
-          return;
-        }
-        const nodeToUpdate = this.getNodeBySyncId(message.node.$.syncId);
-        if (nodeToUpdate) {
-          nodeToUpdate.updateFromJSON(message.previousNode);
-          return;
-        }
+        $reverseUpdatedMessage(this.syncIdMap, message);
         break;
       case "destroyed":
-        this.syncIdToNodeKey.delete(message.node.$.syncId);
-        this.createNodeFromMessage(message);
+        $reverseDestroyedMessage(this.syncIdMap, message);
         break;
       case "cursor":
         // no-op, although moving our own cursor back in time might be cool
@@ -703,58 +536,6 @@ export class CollabInstance {
       default:
         console.error(`Unknown message type: ${JSON.stringify(message)}`);
         return;
-    }
-  }
-
-  // Creates a node for a peer message.
-  // @todo How can we generically support all node types?
-  createNodeFromMessage(message: NodeMessageBase) {
-    let messageNode;
-    switch (message.node.type) {
-      case "paragraph":
-        messageNode = $createParagraphNode().updateFromJSON(
-          // @ts-ignore
-          message.node,
-        );
-        break;
-      case "text":
-        // @ts-ignore
-        messageNode = $createTextNode().updateFromJSON(message.node);
-        break;
-      default:
-        console.error(`Got unknown type ${message.node.type}`);
-        return;
-    }
-    // @todo: Handle out of order inserts, maybe on the server
-    if (message.previousId) {
-      const previousNode = this.getNodeBySyncId(message.previousId);
-      if (!previousNode) {
-        console.error(`Previous key not found: ${message.previousId}`);
-        return;
-      }
-      previousNode.insertAfter(messageNode);
-      this.mapSyncIdToNodeKey(message.node.$.syncId, messageNode.getKey());
-    } else if (message.parentId) {
-      const parentNode = this.getNodeBySyncId(message.parentId);
-      if (!parentNode) {
-        console.error(`Parent key not found: ${message.parentId}`);
-        return;
-      }
-      if (!$isElementNode(parentNode)) {
-        console.error(
-          `Parent is not an element node, can't append to ${message.parentId}`,
-        );
-        return;
-      }
-      parentNode.append(messageNode);
-      this.mapSyncIdToNodeKey(message.node.$.syncId, messageNode.getKey());
-    } else {
-      if (messageNode.getType() === "text") {
-        console.error("text nodes cannot be appended to root");
-        return;
-      }
-      $getRoot().append(messageNode);
-      this.mapSyncIdToNodeKey(message.node.$.syncId, messageNode.getKey());
     }
   }
 
@@ -766,12 +547,11 @@ export class CollabInstance {
       return true;
     }
     this.redoStack.push(lastStack);
-    this.undoCommandRunning = true;
     this.editor.update(
       () => {
         lastStack.forEach((m) => this.reverseMessage(m));
       },
-      { tag: SKIP_DOM_SELECTION_TAG },
+      { tag: [SYNC_UNDO_TAG, SKIP_DOM_SELECTION_TAG] },
     );
     return true;
   }
@@ -783,12 +563,11 @@ export class CollabInstance {
       return true;
     }
     this.undoStack.push(lastStack);
-    this.undoCommandRunning = true;
     this.editor.update(
       () => {
         lastStack.forEach((m) => this.applyMessage(m));
       },
-      { tag: SKIP_DOM_SELECTION_TAG },
+      { tag: [SYNC_UNDO_TAG, SKIP_DOM_SELECTION_TAG] },
     );
     return true;
   }
@@ -821,8 +600,8 @@ export class CollabInstance {
     this.editor.read(() => {
       const selection = $getSelection();
       if ($isRangeSelection(selection)) {
-        const anchorSyncId = getNodeSyncId(selection.anchor.getNode());
-        const focusSyncId = getNodeSyncId(selection.focus.getNode());
+        const anchorSyncId = $getNodeSyncId(selection.anchor.getNode());
+        const focusSyncId = $getNodeSyncId(selection.focus.getNode());
         if (anchorSyncId && focusSyncId) {
           const message: PeerMessage = {
             type: "cursor",

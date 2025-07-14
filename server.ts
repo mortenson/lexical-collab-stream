@@ -158,6 +158,11 @@ const listenForMessage = async (
   documentId: string,
   lastId: string,
 ) => {
+  // Prevent infinite looping on closed messages.
+  if (ws.readyState === ws.CLOSED) {
+    return;
+  }
+
   const chunk = await readStreamChunk(documentId, lastId, STREAM_COUNT);
   if (!chunk || chunk.messages.length === 0) {
     await delay(STREAM_DELAY_MS);
@@ -175,7 +180,10 @@ const listenForMessage = async (
 };
 
 wss.on("connection", (ws) => {
-  ws.on("error", console.error);
+  ws.on("error", (error) => {
+    console.error(error);
+    ws.close();
+  });
 
   ws.on("message", (data, isBinary) => {
     const str = data.toString();

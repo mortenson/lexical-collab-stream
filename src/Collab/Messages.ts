@@ -4,7 +4,7 @@ import {
   SerializedLexicalNode,
 } from "lexical";
 
-interface SerializedSyncNode extends SerializedLexicalNode {
+export interface SerializedSyncNode extends SerializedLexicalNode {
   [NODE_STATE_KEY]: {
     syncId: string;
   };
@@ -24,33 +24,33 @@ export interface NodeMessageBase {
   parentId?: string;
 }
 
-interface CreatedMessage extends NodeMessageBase {
+export interface CreatedMessage extends NodeMessageBase {
   type: "created";
 }
 
-interface UpdatedMessage extends NodeMessageBase {
+export interface UpdatedMessage extends NodeMessageBase {
   type: "updated";
   previousNode: SerializedSyncNode;
 }
 
-interface DestroyedMessage extends NodeMessageBase {
+export interface DestroyedMessage extends NodeMessageBase {
   type: "destroyed";
 }
 
-interface InitMessage {
+export interface InitMessage {
   lastId: string;
   firstId?: string;
   type: "init";
   editorState: SerializedEditorState;
 }
 
-interface InitReceivedMessage {
+export interface InitReceivedMessage {
   type: "init-received";
   userId: string;
   lastId: string;
 }
 
-interface PersistDocumentMessage {
+export interface PersistDocumentMessage {
   type: "persist-document";
   lastId: string;
   editorState: SerializedEditorState;
@@ -66,7 +66,7 @@ export interface CursorMessage {
   focusOffset: number;
 }
 
-interface TypedMessage {
+export interface TypedMessage {
   type: string;
 }
 
@@ -125,4 +125,8 @@ export const isSyncMessageClient = (
     (isTypedMessage(message) &&
       ["init-received", "persist-document"].includes(message.type))
   );
+};
+
+export const compareRedisStreamIds = (a: string, b: string): number => {
+  return parseInt(a.split("-")[0]) - parseInt(b.split("-")[0]);
 };

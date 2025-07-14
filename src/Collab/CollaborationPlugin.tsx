@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { CollabCursor, CollabInstance } from "./Collab";
+import { CollabInstance } from "./Collab";
+import { CollabCursor } from "./cursor";
 
 export default function CollaborationPlugin() {
   const [editor] = useLexicalComposerContext();
