@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { CollabInstance } from "./Collab";
 import { CollabCursor } from "./cursor";
+import { CollabWebSocket } from "./CollabWebSocket";
 
 export default function CollaborationPlugin() {
   const [editor] = useLexicalComposerContext();
@@ -15,6 +16,7 @@ export default function CollaborationPlugin() {
     collab.current = new CollabInstance(
       userId,
       editor,
+      new CollabWebSocket("ws://127.0.0.1:9045"),
       (cursors) => setCursors(new Map(cursors)),
       () => setDesynced(true),
     );

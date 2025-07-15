@@ -3,19 +3,16 @@ import {
   $getNodeByKey,
   $getSelection,
   $getState,
-  $hasUpdateTag,
   $isRangeSelection,
   $onUpdate,
   $setState,
   COMMAND_PRIORITY_CRITICAL,
   EditorState,
   LexicalEditor,
-  LexicalNode,
   NodeKey,
   NodeMutation,
   ParagraphNode,
   REDO_COMMAND,
-  SerializedLexicalNode,
   SKIP_DOM_SELECTION_TAG,
   TextNode,
   UNDO_COMMAND,
@@ -35,7 +32,6 @@ import { $getNodeSyncId, SYNC_ID_UNSET, syncIdState } from "./nodeState";
 import {
   $applyCreatedMessage,
   $createCreatedMessage,
-  $createNodeMessageBase,
   $reverseCreatedMessage,
 } from "./create";
 import {
@@ -53,6 +49,7 @@ import {
   CollabCursor,
   CURSOR_INACTIVITY_LIMIT,
 } from "./cursor";
+import { CollabNetwork } from "./CollabNetwork";
 
 const SYNC_TAG = "SYNC_TAG";
 
@@ -65,7 +62,7 @@ type DesyncListener = () => void;
 export class CollabInstance {
   syncIdMap: SyncIdMap;
   editor: LexicalEditor;
-  ws?: WebSocket;
+  network: CollabNetwork;
   tearDownListeners: () => void;
   reconnectInterval?: NodeJS.Timeout;
   persistInterval?: NodeJS.Timeout;
@@ -87,10 +84,14 @@ export class CollabInstance {
   constructor(
     userId: string,
     editor: LexicalEditor,
+    network: CollabNetwork,
     onCursorsChange: CursorListener,
     onDesync: DesyncListener,
   ) {
     this.editor = editor;
+    this.network = network;
+    this.network.registerOpenListener(this.flushStack.bind(this));
+    this.network.registerMessageListener(this.onMessage.bind(this));
     this.userId = userId;
     this.syncIdMap = new SyncIdMap();
     this.messageStack = [];
@@ -160,7 +161,7 @@ export class CollabInstance {
     clearInterval(this.persistInterval);
     clearInterval(this.cursorInterval);
     clearTimeout(this.flushTimer);
-    this.connect();
+    this.network.connect();
     this.tearDownListeners = mergeRegister(
       // @todo Feels like we could generically support every element type?
       this.editor.registerMutationListener(
@@ -188,13 +189,9 @@ export class CollabInstance {
     );
 
     this.reconnectInterval = setInterval(() => {
-      if (
-        this.ws &&
-        this.ws.readyState === this.ws.CLOSED &&
-        this.shouldReconnect
-      ) {
+      if (!this.network.isOpen() && this.shouldReconnect) {
         console.error("websocket closed, reconnecting...");
-        this.connect();
+        this.network.connect();
       }
     }, 1000);
 
@@ -206,19 +203,6 @@ export class CollabInstance {
     }, 100);
   }
 
-  // Connects to the remote websocket server.
-  // Can be called multiple times.
-  connect() {
-    this.ws?.close();
-    this.ws = new WebSocket("ws://127.0.0.1:9045");
-    this.ws.addEventListener("error", (error) => {
-      console.error(error);
-      this.ws?.close();
-    });
-    this.ws.addEventListener("open", () => this.flushStack());
-    this.ws.addEventListener("message", this.onMessage.bind(this));
-  }
-
   // Stops collaboration and unbinds events from the editor.
   // Should only be called when component unmounts.
   stop() {
@@ -226,13 +210,8 @@ export class CollabInstance {
     clearInterval(this.persistInterval);
     clearInterval(this.cursorInterval);
     clearTimeout(this.flushTimer);
-    this.ws?.close();
+    this.network.close();
     this.tearDownListeners();
-  }
-
-  // Sends a websocket message to the server.
-  send(message: SyncMessageClient): void {
-    this.ws?.send(JSON.stringify(message));
   }
 
   // Populates our UUID <=> NodeKey maps after initializing editor state.
@@ -264,11 +243,7 @@ export class CollabInstance {
       clearTimeout(this.flushTimer);
     }
     this.flushTimer = setTimeout(() => {
-      if (
-        !this.ws ||
-        this.ws.readyState !== WebSocket.OPEN ||
-        this.messageStack.length === 0
-      ) {
+      if (!this.network.isOpen() || this.messageStack.length === 0) {
         return;
       }
       let stack = this.messageStack;
@@ -321,7 +296,7 @@ export class CollabInstance {
             !m.parentId ||
             !destroyedList.includes(m.parentId),
         );
-      this.send({
+      this.network.send({
         type: "peer-chunk",
         messages: flatStack,
       });
@@ -411,16 +386,9 @@ export class CollabInstance {
   }
 
   // Responds to incoming websocket messages, often broadcast from peers.
-  onMessage(wsMessage: MessageEvent) {
+  onMessage(serverMessage: SyncMessageServer) {
     this.editor.update(
       () => {
-        const serverMessage: SyncMessageServer = JSON.parse(wsMessage.data);
-        if (!isSyncMessageServer(serverMessage)) {
-          console.error(
-            `Non-server message sent from server: ${wsMessage.data}`,
-          );
-          return;
-        }
         // The server sends us this event every time we connect.
         if (serverMessage.type === "init") {
           // lastId being set implies that this is a re-connect
@@ -432,7 +400,7 @@ export class CollabInstance {
               compareRedisStreamIds(serverMessage.firstId, this.lastId) > 0
             ) {
               this.shouldReconnect = false;
-              this.ws?.close();
+              this.network.close();
               // @todo I think there are strategies we could choose to take
               // here, but it does require some UI choices so punting for now.
               // example options the user could choose in a UI:
@@ -458,7 +426,7 @@ export class CollabInstance {
             $onUpdate(() => this.populateSyncIdMap());
           }
           // ACK the init to start streaming messages from lastId.
-          this.send({
+          this.network.send({
             type: "init-received",
             userId: this.userId,
             lastId: this.lastId,
@@ -578,13 +546,12 @@ export class CollabInstance {
   // same stream ID (lastId).
   persist() {
     if (
-      this.ws &&
-      this.ws.readyState === this.ws.OPEN &&
+      this.network.isOpen() &&
       this.lastId &&
       (!this.lastPersistedId || this.lastId !== this.lastPersistedId)
     ) {
       this.lastPersistedId = this.lastId;
-      this.send({
+      this.network.send({
         type: "persist-document",
         lastId: this.lastId,
         editorState: this.editor.getEditorState().toJSON(),
@@ -594,7 +561,7 @@ export class CollabInstance {
 
   // Sends our local cursor position to peers.
   sendCursor() {
-    if (!this.ws || this.ws.readyState !== this.ws.OPEN) {
+    if (!this.network.isOpen()) {
       return;
     }
     this.editor.read(() => {
@@ -624,7 +591,7 @@ export class CollabInstance {
             return;
           }
           this.lastCursorMessage = message;
-          this.send({
+          this.network.send({
             type: "peer-chunk",
             messages: [message],
           });
@@ -650,7 +617,7 @@ export class CollabInstance {
   // Debug utilities to test offline syncing.
   debugDisconnect() {
     this.shouldReconnect = false;
-    this.ws?.close();
+    this.network.close();
   }
 
   debugReconnect() {
