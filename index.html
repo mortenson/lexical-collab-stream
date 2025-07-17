@@ -47,7 +47,7 @@
         window.location.search.indexOf("trystero") !== -1
           ? "trystero"
           : "websocket";
-      const src = `/app.html?roomId=${roomId}&network=${provider}`;
+      const src = `app.html?roomId=${roomId}&network=${provider}`;
       document.getElementById("left").src = src;
       document.getElementById("right").src = src;
       if (provider === "trystero") {
