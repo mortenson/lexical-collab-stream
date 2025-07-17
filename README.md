@@ -58,12 +58,26 @@ own project you can:
 2. Import `CollaborationPlugin` and add `<CollaborationPlugin />` to your
    `<LexicalComposer>` tree:
 
-```tsx
-  <LexicalComposer>
-    <CollaborationPlugin network={{type: 'websocket', url: 'wss://example.com'}} />
-    {/* or */}
-    <CollaborationPlugin network={{type: 'trystero', config: { appId: "appId", password: "secret" }, roomId: "roomId"}} />
+```jsx
+<LexicalComposer>
+  <CollaborationPlugin
+    userId="userId"
+    network={{
+      type: "websocket",
+      url: "wss://example.com",
+    }}
+  />
+  {/* or */}
+  <CollaborationPlugin
+    userId="userId"
+    network={{
+      type: "trystero",
+      config: { appId: "appId", password: "secret" },
+      roomId: "roomId",
+    }}
+  />
   ...
+</LexicalComposer>
 ```
 
 3. If using websockets, copy `server.ts` and add authentication and document

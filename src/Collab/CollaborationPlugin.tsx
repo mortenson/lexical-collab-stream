@@ -21,9 +21,10 @@ export type NetworkProps = TrysteroProps | WebSocketProps;
 
 interface IProps {
   network: NetworkProps;
+  userId: string;
 }
 
-export default function CollaborationPlugin({ network }: IProps) {
+export default function CollaborationPlugin({ userId, network }: IProps) {
   const [editor] = useLexicalComposerContext();
   const [cursors, setCursors] = useState<Map<string, CollabCursor>>();
   const [connected, setConnected] = useState(true);
@@ -31,7 +32,6 @@ export default function CollaborationPlugin({ network }: IProps) {
   const collab = useRef<CollabInstance>();
   useEffect(() => {
     editor.setEditable(false);
-    const userId = "user_" + Math.floor(Math.random() * 100);
     collab.current = new CollabInstance(
       userId,
       editor,

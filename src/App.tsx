@@ -30,10 +30,10 @@ import {
 import ExampleTheme from "./ExampleTheme";
 import ToolbarPlugin from "./plugins/ToolbarPlugin";
 import TreeViewPlugin from "./plugins/TreeViewPlugin";
-// import { parseAllowedColor, parseAllowedFontSize } from "./styleConfig";
 import CollaborationPlugin, {
   NetworkProps,
 } from "./Collab/CollaborationPlugin";
+import { useMemo } from "react";
 
 const placeholder = "Enter some rich text...";
 
@@ -68,25 +68,6 @@ const exportMap: DOMExportOutputMap = new Map<
   [TextNode, removeStylesExportDOM],
 ]);
 
-// const getExtraStyles = (element: HTMLElement): string => {
-//   // Parse styles from pasted input, but only if they match exactly the
-//   // sort of styles that would be produced by exportDOM
-//   let extraStyles = "";
-//   const fontSize = parseAllowedFontSize(element.style.fontSize);
-//   const backgroundColor = parseAllowedColor(element.style.backgroundColor);
-//   const color = parseAllowedColor(element.style.color);
-//   if (fontSize !== "" && fontSize !== "15px") {
-//     extraStyles += `font-size: ${fontSize};`;
-//   }
-//   if (backgroundColor !== "" && backgroundColor !== "rgb(255, 255, 255)") {
-//     extraStyles += `background-color: ${backgroundColor};`;
-//   }
-//   if (color !== "" && color !== "rgb(0, 0, 0)") {
-//     extraStyles += `color: ${color};`;
-//   }
-//   return extraStyles;
-// };
-
 const constructImportMap = (): DOMConversionMap => {
   const importMap: DOMConversionMap = {};
 
@@ -110,20 +91,6 @@ const constructImportMap = (): DOMConversionMap => {
           ) {
             return output;
           }
-          // const extraStyles = getExtraStyles(element);
-          // if (extraStyles) {
-          //   const { forChild } = output;
-          //   return {
-          //     ...output,
-          //     forChild: (child, parent) => {
-          //       const textNode = forChild(child, parent);
-          //       if ($isTextNode(textNode)) {
-          //         textNode.setStyle(textNode.getStyle() + extraStyles);
-          //       }
-          //       return textNode;
-          //     },
-          //   };
-          // }
           return output;
         },
       };
@@ -159,10 +126,11 @@ export default function App() {
           type: "websocket",
           url: "ws://127.0.0.1:9045",
         };
+  const userId = useMemo(() => "user_" + Math.floor(Math.random() * 100), []);
   return (
     <LexicalComposer initialConfig={editorConfig}>
       <div className="editor-container">
-        <CollaborationPlugin network={network} />
+        <CollaborationPlugin network={network} userId={userId} />
         <ToolbarPlugin />
         <div className="editor-inner">
           <RichTextPlugin
