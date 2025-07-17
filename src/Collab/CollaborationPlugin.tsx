@@ -4,25 +4,40 @@ import { CollabInstance } from "./CollabInstance";
 import { CollabCursor } from "./cursor";
 import { CollabWebSocket } from "./CollabWebSocket";
 import { CollabTrystero } from "./CollabTrystero";
+import { BaseRoomConfig, RelayConfig, TurnConfig } from "trystero";
 
-export default function CollaborationPlugin() {
+interface TrysteroProps {
+  type: "trystero";
+  config: BaseRoomConfig & RelayConfig & TurnConfig;
+  roomId: string;
+}
+
+interface WebSocketProps {
+  type: "websocket";
+  url: string;
+}
+
+export type NetworkProps = TrysteroProps | WebSocketProps;
+
+interface IProps {
+  network: NetworkProps;
+}
+
+export default function CollaborationPlugin({ network }: IProps) {
   const [editor] = useLexicalComposerContext();
   const [cursors, setCursors] = useState<Map<string, CollabCursor>>();
   const [connected, setConnected] = useState(true);
   const [desynced, setDesynced] = useState(false);
   const collab = useRef<CollabInstance>();
-  const network = window.location.search.indexOf("trystero") !== -1
-    ? "trystero"
-    : "websocket";
   useEffect(() => {
     editor.setEditable(false);
     const userId = "user_" + Math.floor(Math.random() * 100);
     collab.current = new CollabInstance(
       userId,
       editor,
-      network === "trystero"
-        ? new CollabTrystero("lexical_sync_demo", window.location.search)
-        : new CollabWebSocket("ws://127.0.0.1:9045"),
+      network.type === "trystero"
+        ? new CollabTrystero(network.config, network.roomId)
+        : new CollabWebSocket(network.url),
       (cursors) => setCursors(new Map(cursors)),
       () => setDesynced(true),
     );

@@ -68,6 +68,7 @@ export class CollabInstance {
   flushTimer?: NodeJS.Timeout;
   userId: string;
   lastId?: string;
+  seenStreamIds: Map<string, boolean>;
   lastPersistedId?: string;
   messageStack: PeerMessage[];
   undoStack: PeerMessage[][];
@@ -101,6 +102,7 @@ export class CollabInstance {
     this.undoCommandRunning = false;
     this.shouldReconnect = false;
     this.tearDownListeners = () => {};
+    this.seenStreamIds = new Map();
   }
 
   // Splits text nodes into words.
@@ -314,7 +316,11 @@ export class CollabInstance {
       prevEditorState: EditorState;
     },
   ) {
-    if (updateTags.has(SYNC_TAG) || updateTags.has('registerMutationListener') || updateTags.has('history-merge')) {
+    if (
+      updateTags.has(SYNC_TAG) ||
+      updateTags.has("registerMutationListener") ||
+      updateTags.has("history-merge")
+    ) {
       return;
     }
     // Ensure every node has a (unique) UUID
@@ -439,6 +445,19 @@ export class CollabInstance {
           if (!isPeerMessage(message)) {
             console.error(
               `Non-peer message sent from server: ${JSON.stringify(message)}`,
+            );
+            return;
+          }
+          if (message.streamId === undefined) {
+            console.error(
+              `Peer message does not contain stream ID: ${JSON.stringify(message)}`,
+            );
+            return;
+          }
+          if (this.seenStreamIds.has(message.streamId)) {
+            this.lastId = message.streamId;
+            console.error(
+              `Peer sent us a message we've already seen: ${JSON.stringify(message)}`,
             );
             return;
           }

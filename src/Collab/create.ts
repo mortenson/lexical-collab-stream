@@ -22,7 +22,6 @@ export const $applyCreatedMessage = (
     console.error(`Node is of unknown type: ${JSON.stringify(message.node)}`);
     return;
   }
-  // @todo this happens on remount a lot, don't understand why completely
   if ($getNodeBySyncId(map, message.node.$.syncId)) {
     console.error(
       `Trying to insert node that already exists: ${JSON.stringify(message.node)}`,

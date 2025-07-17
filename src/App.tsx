@@ -31,7 +31,9 @@ import ExampleTheme from "./ExampleTheme";
 import ToolbarPlugin from "./plugins/ToolbarPlugin";
 import TreeViewPlugin from "./plugins/TreeViewPlugin";
 // import { parseAllowedColor, parseAllowedFontSize } from "./styleConfig";
-import CollaborationPlugin from "./Collab/CollaborationPlugin";
+import CollaborationPlugin, {
+  NetworkProps,
+} from "./Collab/CollaborationPlugin";
 
 const placeholder = "Enter some rich text...";
 
@@ -146,10 +148,21 @@ const editorConfig: InitialConfigType = {
 };
 
 export default function App() {
+  const network: NetworkProps =
+    window.location.search.indexOf("trystero") !== -1
+      ? {
+          type: "trystero",
+          config: { appId: "lexical_sync_demo" },
+          roomId: window.location.search,
+        }
+      : {
+          type: "websocket",
+          url: "ws://127.0.0.1:9045",
+        };
   return (
     <LexicalComposer initialConfig={editorConfig}>
       <div className="editor-container">
-        <CollaborationPlugin />
+        <CollaborationPlugin network={network} />
         <ToolbarPlugin />
         <div className="editor-inner">
           <RichTextPlugin

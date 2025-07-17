@@ -1,4 +1,11 @@
-import { ActionSender, Room, TargetPeers } from "trystero";
+import {
+  ActionSender,
+  BaseRoomConfig,
+  RelayConfig,
+  Room,
+  TargetPeers,
+  TurnConfig,
+} from "trystero";
 import { CollabNetwork, MessageListener, OpenListener } from "./CollabNetwork";
 import {
   isSyncMessageClient,
@@ -18,7 +25,6 @@ type TrysteroSyncAction = {
 // so that the project can be demo'd without a websocket server or redis
 // running forever.
 export class CollabTrystero implements CollabNetwork {
-  appId: string;
   roomId: string;
   room?: Room;
   sendPeerMessage: ActionSender<TrysteroSyncAction>;
@@ -31,9 +37,13 @@ export class CollabTrystero implements CollabNetwork {
   lastId: string;
   alreadyInit: boolean;
   connected: boolean;
+  config: BaseRoomConfig & RelayConfig & TurnConfig;
 
-  constructor(appId: string, roomId: string) {
-    this.appId = appId;
+  constructor(
+    config: BaseRoomConfig & RelayConfig & TurnConfig,
+    roomId: string,
+  ) {
+    this.config = config;
     this.roomId = roomId;
     this.openListeners = [];
     this.messageListeners = [];
@@ -59,8 +69,8 @@ export class CollabTrystero implements CollabNetwork {
 
   async connect() {
     await this.close();
-    console.log(`Joining room ${this.appId}:${this.roomId}`);
-    this.room = joinRoom({ appId: this.appId }, this.roomId);
+    console.log(`Joining room ${this.config.appId}:${this.roomId}`);
+    this.room = joinRoom(this.config, this.roomId);
     this.connected = true;
 
     // Our only WebRTC call is to send peers messages as if we were a server.
@@ -119,19 +129,6 @@ export class CollabTrystero implements CollabNetwork {
         } else {
           this.alreadyInit = true;
         }
-      }
-      if (message.type === "peer-chunk") {
-        // Peers are unpredictable, on reconnection we may get spammed with
-        // duplicate messages from multiple peers.
-        const messages = message.messages.flatMap((m) => {
-          if (m.streamId && this.streamMap.has(m.streamId)) {
-            console.error(`Peer sent us ${m.streamId}, which we already have`);
-            return [];
-          }
-          this.addToStream(m);
-          return [m];
-        });
-        message.messages = messages;
       }
       // Finally, call into the actual CollabInstance.
       this.messageListeners.forEach((f) => f(message));

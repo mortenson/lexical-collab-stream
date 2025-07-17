@@ -49,6 +49,31 @@ flowchart RL
 If you want to try out Trystero/WebRTC instead of running a websocket server,
 add the `?trystero` query param to the page.
 
+## Installation/Use
+
+The code here isn't published to NPM, yet, so if you want to try it out on your
+own project you can:
+
+1. Copy `src/Collab` somewhere in your codebase
+2. Import `CollaborationPlugin` and add `<CollaborationPlugin />` to your
+   `<LexicalComposer>` tree:
+
+```tsx
+  <LexicalComposer>
+    <CollaborationPlugin network={{type: 'websocket', url: 'wss://example.com'}} />
+    {/* or */}
+    <CollaborationPlugin network={{type: 'trystero', config: { appId: "appId", password: "secret" }, roomId: "roomId"}} />
+  ...
+```
+
+3. If using websockets, copy `server.ts` and add authentication and document
+   handling that fits your use case. The server code is surprisingly boring
+   and does not depend on Lexical for more than types, so you can re-implement
+   it in any language.
+
+If you end up using the project and would prefer it as an NPM package, let me
+know!
+
 ## Not implemented yet
 
 - Every node type `lexical-yjs` supports (note: I'm actually not sure the best

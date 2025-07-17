@@ -4,9 +4,23 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Lexical Sync Demo</title>
+    <style>
+      iframe {
+        flex-grow: 1;
+        height: 550px;
+        border: 0;
+      }
+      iframe:not(:last-child) {
+        border-right: 1px solid black;
+      }
+      #header {
+        margin: 10px 0;
+        text-align: center;
+      }
+    </style>
   </head>
   <body>
-    <h1 align="center" style="margin: 0; font-size: 1.3em">
+    <h1 style="text-align: center; font-size: 1.3em">
       Lexical Sync Demo (no Yjs edition)
     </h1>
     <div id="header" style="display: none">
@@ -15,32 +29,16 @@
       since I don't want to run a websocket server. Reconnection may be a little
       jacked but trust me it works better with websockets)
     </div>
-    <iframe
-      name="left"
-      id="left"
-      style="
-        border: 2px dashed black;
-        width: calc(50% - 4px);
-        position: fixed;
-        top: 80px;
-        left: 0;
-        height: calc(100% - 44px);
-      "
-      width="50%"
-    ></iframe>
-    <iframe
-      name="right"
-      id="right"
-      style="
-        border: 2px dashed black;
-        width: calc(50% - 4px);
-        position: fixed;
-        top: 80px;
-        left: calc(50% + 1px);
-        height: calc(100% - 44px);
-      "
-      width="50%"
-    ></iframe>
+    <div id="iframes" style="display: flex">
+      <iframe></iframe>
+      <iframe></iframe>
+    </div>
+    <button id="addpeer" style="margin-top: 15px">Add peer</button>
+    <div style="margin-top: 15px">
+      <a href="https://github.com/mortenson/lexical-sync-demo" target="_blank"
+        >View project on GitHub</a
+      >
+    </div>
     <script>
       const roomId = `lexical_sync_demo_room_${Math.random()}`;
       const provider =
@@ -48,12 +46,17 @@
           ? "trystero"
           : "websocket";
       const src = `/lexical-sync-demo/app.html?roomId=${roomId}&network=${provider}`;
-      document.getElementById("left").src = src;
-      document.getElementById("right").src = src;
+      [...document.getElementsByTagName("iframe")].forEach(
+        (iframe) => (iframe.src = src),
+      );
       if (provider === "trystero") {
-        document.getElementById("header").style =
-          "margin-top: 10px; text-align: center;";
+        document.getElementById("header").style = "display: block;";
       }
+      document.getElementById("addpeer").addEventListener("click", () => {
+        const iframe = document.createElement("iframe");
+        iframe.src = src;
+        document.getElementById("iframes").appendChild(iframe);
+      });
     </script>
   </body>
 </html>
