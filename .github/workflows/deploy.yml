@@ -12,6 +12,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - run: npm install
       - run: npm run build
       - id: deployment
         uses: actions/upload-pages-artifact@v3
