@@ -314,7 +314,7 @@ export class CollabInstance {
       prevEditorState: EditorState;
     },
   ) {
-    if (updateTags.has(SYNC_TAG)) {
+    if (updateTags.has(SYNC_TAG) || updateTags.has('registerMutationListener') || updateTags.has('history-merge')) {
       return;
     }
     // Ensure every node has a (unique) UUID
@@ -508,7 +508,6 @@ export class CollabInstance {
   }
 
   // Support undo by undoing our previous sends to the server.
-  // @todo This doesn't work (well?) when offline editing
   undoCommand() {
     const lastStack = this.undoStack.pop();
     if (!lastStack) {
