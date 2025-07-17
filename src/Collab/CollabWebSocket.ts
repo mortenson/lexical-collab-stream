@@ -1,4 +1,10 @@
-import { CollabNetwork, MessageListener, OpenListener } from "./CollabNetwork";
+import {
+  CollabNetwork,
+  debugEventSyncMessage,
+  DebugListener,
+  MessageListener,
+  OpenListener,
+} from "./CollabNetwork";
 import {
   isSyncMessageServer,
   SyncMessageClient,
@@ -10,11 +16,13 @@ export class CollabWebSocket implements CollabNetwork {
   ws?: WebSocket;
   openListeners: OpenListener[];
   messageListeners: MessageListener[];
+  debugListeners: DebugListener[];
 
   constructor(url: string | URL) {
     this.url = url;
     this.openListeners = [];
     this.messageListeners = [];
+    this.debugListeners = [];
   }
 
   connect() {
@@ -24,9 +32,10 @@ export class CollabWebSocket implements CollabNetwork {
       console.error(error);
       this.ws?.close();
     });
-    this.ws.addEventListener("open", () =>
-      this.openListeners.forEach((f) => f()),
-    );
+    this.ws.addEventListener("open", () => {
+      this.openListeners.forEach((f) => f());
+      this.debugListeners.forEach((f) => f({ type: "connect" }));
+    });
     this.ws.addEventListener("message", (wsMessage) => {
       const message: SyncMessageServer = JSON.parse(wsMessage.data);
       if (!isSyncMessageServer(message)) {
@@ -34,6 +43,9 @@ export class CollabWebSocket implements CollabNetwork {
         return;
       }
       this.messageListeners.forEach((f) => f(message));
+      this.debugListeners.forEach((f) =>
+        f(debugEventSyncMessage("down", message)),
+      );
     });
   }
 
@@ -43,10 +55,12 @@ export class CollabWebSocket implements CollabNetwork {
 
   close() {
     this.ws?.close();
+    this.debugListeners.forEach((f) => f({ type: "close" }));
   }
 
   send(message: SyncMessageClient) {
     this.ws?.send(JSON.stringify(message));
+    this.debugListeners.forEach((f) => f(debugEventSyncMessage("up", message)));
   }
 
   registerMessageListener(listener: MessageListener) {
@@ -55,5 +69,9 @@ export class CollabWebSocket implements CollabNetwork {
 
   registerOpenListener(listener: OpenListener) {
     this.openListeners.push(listener);
+  }
+
+  registerDebugListener(listener: DebugListener) {
+    this.debugListeners.push(listener);
   }
 }

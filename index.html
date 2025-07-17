@@ -7,7 +7,7 @@
     <style>
       iframe {
         flex-grow: 1;
-        height: 550px;
+        height: 100vh;
         border: 0;
       }
       iframe:not(:last-child) {
@@ -33,11 +33,13 @@
       <iframe></iframe>
       <iframe></iframe>
     </div>
-    <button id="addpeer" style="margin-top: 15px">Add peer</button>
-    <div style="margin-top: 15px">
-      <a href="https://github.com/mortenson/lexical-sync-demo" target="_blank"
-        >View project on GitHub</a
-      >
+    <div style="position: fixed; bottom: 0">
+      <button id="addpeer" style="margin-top: 15px">Add peer</button>
+      <div style="margin-top: 15px">
+        <a href="https://github.com/mortenson/lexical-sync-demo" target="_blank"
+          >View project on GitHub</a
+        >
+      </div>
     </div>
     <script>
       const roomId = `lexical_sync_demo_room_${Math.random()}`;

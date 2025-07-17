@@ -5,6 +5,7 @@ import { CollabCursor } from "./cursor";
 import { CollabWebSocket } from "./CollabWebSocket";
 import { CollabTrystero } from "./CollabTrystero";
 import { BaseRoomConfig, RelayConfig, TurnConfig } from "trystero";
+import { DebugListener } from "./CollabNetwork";
 
 interface TrysteroProps {
   type: "trystero";
@@ -22,9 +23,14 @@ export type NetworkProps = TrysteroProps | WebSocketProps;
 interface IProps {
   network: NetworkProps;
   userId: string;
+  debugListener?: DebugListener;
 }
 
-export default function CollaborationPlugin({ userId, network }: IProps) {
+export default function CollaborationPlugin({
+  userId,
+  network,
+  debugListener,
+}: IProps) {
   const [editor] = useLexicalComposerContext();
   const [cursors, setCursors] = useState<Map<string, CollabCursor>>();
   const [connected, setConnected] = useState(true);
@@ -41,6 +47,9 @@ export default function CollaborationPlugin({ userId, network }: IProps) {
       (cursors) => setCursors(new Map(cursors)),
       () => setDesynced(true),
     );
+    if (debugListener) {
+      collab.current.network.registerDebugListener(debugListener);
+    }
     collab.current.start();
     return () => collab.current?.stop();
   }, [editor]);

@@ -6,7 +6,13 @@ import {
   TargetPeers,
   TurnConfig,
 } from "trystero";
-import { CollabNetwork, MessageListener, OpenListener } from "./CollabNetwork";
+import {
+  CollabNetwork,
+  debugEventSyncMessage,
+  DebugListener,
+  MessageListener,
+  OpenListener,
+} from "./CollabNetwork";
 import {
   isSyncMessageClient,
   isSyncMessageServer,
@@ -38,6 +44,7 @@ export class CollabTrystero implements CollabNetwork {
   alreadyInit: boolean;
   connected: boolean;
   config: BaseRoomConfig & RelayConfig & TurnConfig;
+  debugListeners: DebugListener[];
 
   constructor(
     config: BaseRoomConfig & RelayConfig & TurnConfig,
@@ -53,6 +60,7 @@ export class CollabTrystero implements CollabNetwork {
     this.alreadyInit = false;
     this.connected = false;
     this.queuedMessages = [];
+    this.debugListeners = [];
     // This probably would be fetched by a persistent DB.
     this.lastId = "0";
     this.lastEditorState = {
@@ -132,9 +140,13 @@ export class CollabTrystero implements CollabNetwork {
       }
       // Finally, call into the actual CollabInstance.
       this.messageListeners.forEach((f) => f(message));
+      this.debugListeners.forEach((f) =>
+        f(debugEventSyncMessage("down", message)),
+      );
     });
 
     this.openListeners.forEach((f) => f());
+    this.debugListeners.forEach((f) => f({ type: "open" }));
   }
 
   isOpen() {
@@ -145,6 +157,7 @@ export class CollabTrystero implements CollabNetwork {
     this.alreadyInit = false;
     await this.room?.leave();
     this.connected = false;
+    this.debugListeners.forEach((f) => f({ type: "close" }));
   }
 
   // Normally Redis creates stream IDs on insert, so we have to make some up.
@@ -198,6 +211,7 @@ export class CollabTrystero implements CollabNetwork {
         break;
     }
     this.sendPeerMessage({ messageJSON: JSON.stringify(message) });
+    this.debugListeners.forEach((f) => f(debugEventSyncMessage("up", message)));
   }
 
   // Adds a message to our stream and map the stream ID to the stream index.
@@ -228,6 +242,7 @@ export class CollabTrystero implements CollabNetwork {
 
   sendAsServer(message: SyncMessageServer, targetPeers?: TargetPeers) {
     this.sendPeerMessage({ messageJSON: JSON.stringify(message) }, targetPeers);
+    this.debugListeners.forEach((f) => f(debugEventSyncMessage("up", message)));
   }
 
   registerMessageListener(listener: MessageListener) {
@@ -236,5 +251,9 @@ export class CollabTrystero implements CollabNetwork {
 
   registerOpenListener(listener: OpenListener) {
     this.openListeners.push(listener);
+  }
+
+  registerDebugListener(listener: DebugListener) {
+    this.debugListeners.push(listener);
   }
 }

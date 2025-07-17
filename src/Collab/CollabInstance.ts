@@ -301,7 +301,7 @@ export class CollabInstance {
         type: "peer-chunk",
         messages: flatStack,
       });
-    }, 50);
+    }, 250);
   }
 
   // Responds to mutation events in nodes to send our mutations to peers.

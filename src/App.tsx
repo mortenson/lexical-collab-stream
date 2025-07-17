@@ -33,7 +33,8 @@ import TreeViewPlugin from "./plugins/TreeViewPlugin";
 import CollaborationPlugin, {
   NetworkProps,
 } from "./Collab/CollaborationPlugin";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { DebugEvent } from "./Collab/CollabNetwork";
 
 const placeholder = "Enter some rich text...";
 
@@ -127,10 +128,16 @@ export default function App() {
           url: "ws://127.0.0.1:9045",
         };
   const userId = useMemo(() => "user_" + Math.floor(Math.random() * 100), []);
+  const [debug, setDebug] = useState<DebugEvent[]>([]);
+  const debugListener = (e: DebugEvent) => setDebug((prev) => [e, ...prev]);
   return (
     <LexicalComposer initialConfig={editorConfig}>
       <div className="editor-container">
-        <CollaborationPlugin network={network} userId={userId} />
+        <CollaborationPlugin
+          network={network}
+          userId={userId}
+          debugListener={debugListener}
+        />
         <ToolbarPlugin />
         <div className="editor-inner">
           <RichTextPlugin
@@ -148,8 +155,36 @@ export default function App() {
           <HistoryPlugin />
           <AutoFocusPlugin />
           <TreeViewPlugin />
+          <DebugPlugin events={debug} />
         </div>
       </div>
     </LexicalComposer>
   );
 }
+
+const DebugPlugin = (props: { events: DebugEvent[] }) => {
+  return (
+    <pre
+      style={{
+        maxHeight: "200px",
+        overflow: "scroll",
+        background: "#222",
+        color: "white",
+        padding: "5px",
+      }}
+    >
+      <ul
+        style={{ listStyle: "none", margin: 0, padding: 0, marginLeft: "10px" }}
+      >
+        {props.events.map((e, i) => (
+          <li key={i}>
+            {e.direction === "up" ? "↑ " : e.direction === "down" ? "↓ " : ""}
+            {e.type}
+            {e.message && `|${e.message}`}
+            {e.nestedMessages && "|" + e.nestedMessages.join("\n  ↳ ")}
+          </li>
+        ))}
+      </ul>
+    </pre>
+  );
+};
