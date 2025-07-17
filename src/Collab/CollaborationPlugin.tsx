@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { CollabInstance } from "./Collab";
+import { CollabInstance } from "./CollabInstance";
 import { CollabCursor } from "./cursor";
 import { CollabWebSocket } from "./CollabWebSocket";
 import { CollabTrystero } from "./CollabTrystero";
@@ -11,7 +11,7 @@ export default function CollaborationPlugin() {
   const [connected, setConnected] = useState(true);
   const [desynced, setDesynced] = useState(false);
   const collab = useRef<CollabInstance>();
-  const network = window.location.search.indexOf("trystero")
+  const network = window.location.search.indexOf("trystero") !== -1
     ? "trystero"
     : "websocket";
   useEffect(() => {

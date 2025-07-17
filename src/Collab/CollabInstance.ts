@@ -247,7 +247,6 @@ export class CollabInstance {
       let stack = this.messageStack;
       this.messageStack = [];
       // Flatten the stack to avoid sending duplicative messages.
-      // @todo this actually makes undo pretty shitty
       const messageMap: Map<string, [PeerMessage, number]> = new Map();
       const destroyedList: string[] = [];
       stack.forEach((m, i) => {
@@ -287,12 +286,14 @@ export class CollabInstance {
       const flatStack = Array.from(messageMap.values())
         .sort((a, b) => a[1] - b[1])
         .map((a) => a[0])
-        // Filter out nodes that would be deleted by their parent anyway.
         .filter(
           (m) =>
             m.type === "cursor" ||
             !m.parentId ||
-            !destroyedList.includes(m.parentId),
+            // Filter out nodes that would be deleted by their parent anyway.
+            !destroyedList.includes(m.parentId) ||
+            // Filter out identical updates.
+            !(m.type === "updated" && m.node === m.previousNode),
         );
       this.network.send({
         type: "peer-chunk",
