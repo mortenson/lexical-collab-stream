@@ -22,9 +22,7 @@ import { $dfs, mergeRegister } from "@lexical/utils";
 import {
   compareRedisStreamIds,
   isPeerMessage,
-  isSyncMessageServer,
   PeerMessage,
-  SyncMessageClient,
   SyncMessageServer,
 } from "./Messages";
 import { $getNodeBySyncId, SyncIdMap } from "./SyncIdMap";
@@ -399,6 +397,9 @@ export class CollabInstance {
               serverMessage.firstId &&
               compareRedisStreamIds(serverMessage.firstId, this.lastId) > 0
             ) {
+              console.error(
+                `Desync: the earliest stream ID on the server (${serverMessage.firstId}) is too far past our last seen ID (${this.lastId})`,
+              );
               this.shouldReconnect = false;
               this.network.close();
               // @todo I think there are strategies we could choose to take
@@ -436,15 +437,13 @@ export class CollabInstance {
         serverMessage.messages.forEach((message) => {
           if (!isPeerMessage(message)) {
             console.error(
-              `Non-peer message sent from server: ${wsMessage.data}`,
+              `Non-peer message sent from server: ${JSON.stringify(message)}`,
             );
             return;
           }
           // Ignore messages (probably) sent by us.
           if (message.userId === this.userId) {
-            if (message.type != "cursor") {
-              this.lastId = message.streamId;
-            }
+            this.lastId = message.streamId;
             return;
           }
           this.applyMessage(message);

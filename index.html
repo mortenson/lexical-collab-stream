@@ -9,14 +9,20 @@
     <h1 align="center" style="margin: 0; font-size: 1.3em">
       Lexical Sync Demo (no Yjs edition)
     </h1>
+    <div id="header" style="display: none">
+      (This demo uses
+      <a href="https://github.com/dmotz/trystero" target="_blank">trystero</a>
+      since I don't want to run a websocket server. Reconnection may be a little
+      jacked but trust me it works better with websockets)
+    </div>
     <iframe
       name="left"
-      src="/app"
+      id="left"
       style="
         border: 2px dashed black;
         width: calc(50% - 4px);
         position: fixed;
-        top: 40px;
+        top: 80px;
         left: 0;
         height: calc(100% - 44px);
       "
@@ -24,16 +30,30 @@
     ></iframe>
     <iframe
       name="right"
-      src="/app"
+      id="right"
       style="
         border: 2px dashed black;
         width: calc(50% - 4px);
         position: fixed;
-        top: 40px;
+        top: 80px;
         left: calc(50% + 1px);
         height: calc(100% - 44px);
       "
       width="50%"
     ></iframe>
+    <script>
+      const roomId = `lexical_sync_demo_room_${Math.random()}`;
+      const provider =
+        window.location.search.indexOf("trystero") !== -1
+          ? "trystero"
+          : "websocket";
+      const src = `/app.html?roomId=${roomId}&network=${provider}`;
+      document.getElementById("left").src = src;
+      document.getElementById("right").src = src;
+      if (provider === "trystero") {
+        document.getElementById("header").style =
+          "margin-top: 10px; text-align: center;";
+      }
+    </script>
   </body>
 </html>

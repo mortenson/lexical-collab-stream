@@ -30,7 +30,7 @@ import {
 import ExampleTheme from "./ExampleTheme";
 import ToolbarPlugin from "./plugins/ToolbarPlugin";
 import TreeViewPlugin from "./plugins/TreeViewPlugin";
-import { parseAllowedColor, parseAllowedFontSize } from "./styleConfig";
+// import { parseAllowedColor, parseAllowedFontSize } from "./styleConfig";
 import CollaborationPlugin from "./Collab/CollaborationPlugin";
 
 const placeholder = "Enter some rich text...";
@@ -66,24 +66,24 @@ const exportMap: DOMExportOutputMap = new Map<
   [TextNode, removeStylesExportDOM],
 ]);
 
-const getExtraStyles = (element: HTMLElement): string => {
-  // Parse styles from pasted input, but only if they match exactly the
-  // sort of styles that would be produced by exportDOM
-  let extraStyles = "";
-  const fontSize = parseAllowedFontSize(element.style.fontSize);
-  const backgroundColor = parseAllowedColor(element.style.backgroundColor);
-  const color = parseAllowedColor(element.style.color);
-  if (fontSize !== "" && fontSize !== "15px") {
-    extraStyles += `font-size: ${fontSize};`;
-  }
-  if (backgroundColor !== "" && backgroundColor !== "rgb(255, 255, 255)") {
-    extraStyles += `background-color: ${backgroundColor};`;
-  }
-  if (color !== "" && color !== "rgb(0, 0, 0)") {
-    extraStyles += `color: ${color};`;
-  }
-  return extraStyles;
-};
+// const getExtraStyles = (element: HTMLElement): string => {
+//   // Parse styles from pasted input, but only if they match exactly the
+//   // sort of styles that would be produced by exportDOM
+//   let extraStyles = "";
+//   const fontSize = parseAllowedFontSize(element.style.fontSize);
+//   const backgroundColor = parseAllowedColor(element.style.backgroundColor);
+//   const color = parseAllowedColor(element.style.color);
+//   if (fontSize !== "" && fontSize !== "15px") {
+//     extraStyles += `font-size: ${fontSize};`;
+//   }
+//   if (backgroundColor !== "" && backgroundColor !== "rgb(255, 255, 255)") {
+//     extraStyles += `background-color: ${backgroundColor};`;
+//   }
+//   if (color !== "" && color !== "rgb(0, 0, 0)") {
+//     extraStyles += `color: ${color};`;
+//   }
+//   return extraStyles;
+// };
 
 const constructImportMap = (): DOMConversionMap => {
   const importMap: DOMConversionMap = {};

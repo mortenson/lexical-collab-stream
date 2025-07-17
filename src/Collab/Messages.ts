@@ -64,6 +64,7 @@ export interface CursorMessage {
   anchorOffset: number;
   focusId: string;
   focusOffset: number;
+  streamId?: string;
 }
 
 export interface TypedMessage {

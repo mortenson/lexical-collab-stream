@@ -3,9 +3,6 @@
 After reading the article "[Collaborative Text Editing without CRDTs or OT](https://mattweidner.com/2025/05/21/text-without-crdts.html)",
 I thought that it's be fun to try to build a collaborative editor without Yjs.
 
-Basically, every local lexical mutation is sent to a redis stream over
-websockets and broadcast to all listeners
-
 Here's how it works:
 
 1. Ensure that every node has a (unique) UUID by watching for create mutations.
@@ -16,12 +13,17 @@ Here's how it works:
    and the stream ID associated with that document.
 5. A mutation listener sends websocket messages that contain a serialized node
    and information required to upsert/destroy it. On the server, these messages
-   are sent
+   are added to a Redis stream and later streamed back to peers.
 6. A websocket listener receives messages from other clients and upserts nodes
    from JSON, or destroys them. Node insertion is always relative to a sibling or
    parent.
 
-### Attempt to diagram
+For demo purposes, [Trystero](https://github.com/dmotz/trystero/issues) can be
+used to connect clients using WebRTC. I'm not fully comfortable with the
+implementation but didn't want to have to host a Websocket implementation for
+demo purposes. The fact that it works may prove...something?
+
+## Attempt to diagram
 
 ```mermaid
 flowchart RL
@@ -41,8 +43,11 @@ flowchart RL
 ## Running locally
 
 1. In one tab: `npm i && npm run dev`
-2. In another tab: `npm run server` (`npm run server-wipe-db` will wipe redis
+2. In another tab: `npm run server` (`npm run server-wipe-db` will wipe Redis
    if needed).
+
+If you want to try out Trystero/WebRTC instead of running a websocket server,
+add the `?trystero` query param to the page.
 
 ## Not implemented yet
 

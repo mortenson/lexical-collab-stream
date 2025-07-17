@@ -3,6 +3,7 @@ import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext
 import { CollabInstance } from "./Collab";
 import { CollabCursor } from "./cursor";
 import { CollabWebSocket } from "./CollabWebSocket";
+import { CollabTrystero } from "./CollabTrystero";
 
 export default function CollaborationPlugin() {
   const [editor] = useLexicalComposerContext();
@@ -10,13 +11,18 @@ export default function CollaborationPlugin() {
   const [connected, setConnected] = useState(true);
   const [desynced, setDesynced] = useState(false);
   const collab = useRef<CollabInstance>();
+  const network = window.location.search.indexOf("trystero")
+    ? "trystero"
+    : "websocket";
   useEffect(() => {
     editor.setEditable(false);
     const userId = "user_" + Math.floor(Math.random() * 100);
     collab.current = new CollabInstance(
       userId,
       editor,
-      new CollabWebSocket("ws://127.0.0.1:9045"),
+      network === "trystero"
+        ? new CollabTrystero("lexical_sync_demo", window.location.search)
+        : new CollabWebSocket("ws://127.0.0.1:9045"),
       (cursors) => setCursors(new Map(cursors)),
       () => setDesynced(true),
     );
