@@ -7,7 +7,7 @@
     <style>
       iframe {
         flex-grow: 1;
-        height: 100vh;
+        height: calc(100vh + 100px);
         border: 0;
       }
       iframe:not(:last-child) {
@@ -33,8 +33,17 @@
       <iframe></iframe>
       <iframe></iframe>
     </div>
-    <div style="position: fixed; bottom: 0">
-      <button id="addpeer" style="margin-top: 15px">Add peer</button>
+    <div
+      style="
+        position: fixed;
+        bottom: 0;
+        padding: 15px 10px;
+        background: white;
+        z-index: 1;
+        width: 100%;
+      "
+    >
+      <button id="addpeer">Add peer</button>
       <div style="margin-top: 15px">
         <a href="https://github.com/mortenson/lexical-sync-demo" target="_blank"
           >View project on GitHub</a
