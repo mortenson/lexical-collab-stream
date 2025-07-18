@@ -230,7 +230,10 @@ export class CollabInstance {
   }
 
   appendMessagesToStack(messages: PeerMessage[], updateTags: Set<string>) {
-    if (!updateTags.has(SYNC_UNDO_TAG)) {
+    if (
+      !updateTags.has(SYNC_UNDO_TAG) &&
+      messages.find((m) => m.type !== "cursor")
+    ) {
       this.undoStack.push(messages);
     }
     this.messageStack.push(...messages);
