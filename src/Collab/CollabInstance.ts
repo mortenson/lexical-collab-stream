@@ -8,6 +8,7 @@ import {
   $setState,
   COMMAND_PRIORITY_CRITICAL,
   EditorState,
+  ElementNode,
   LexicalEditor,
   NodeKey,
   NodeMutation,
@@ -164,6 +165,14 @@ export class CollabInstance {
     this.tearDownListeners = mergeRegister(
       ...[...this.editor._nodes.entries()]
         .filter(([k, _]) => k !== "root")
+        // Sort element nodes first, since they're likely parents
+        // @todo this may imply that the nodes we track or the order should be
+        // user controlled
+        .sort(
+          ([_, a], [__, b]) =>
+            (ElementNode.prototype.isPrototypeOf(a.klass.prototype) ? 0 : 1) -
+            (ElementNode.prototype.isPrototypeOf(b.klass.prototype) ? 0 : 1),
+        )
         .map(([_, n]) =>
           this.editor.registerMutationListener(
             n.klass,

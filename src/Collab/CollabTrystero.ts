@@ -77,7 +77,7 @@ export class CollabTrystero implements CollabNetwork {
 
   async connect() {
     await this.close();
-    console.log(`Joining room ${this.config.appId}:${this.roomId}`);
+    this.debugListeners.forEach((f) => f({ type: "joining-room" }));
     this.room = joinRoom(this.config, this.roomId);
     this.connected = true;
 
@@ -88,7 +88,9 @@ export class CollabTrystero implements CollabNetwork {
 
     // A peer joined, send them our version of the editorState.
     this.room.onPeerJoin((peerId) => {
-      console.log(`Peer joined: ${peerId}`);
+      this.debugListeners.forEach((f) =>
+        f({ type: "peer-joined", message: `peerId: ${peerId}` }),
+      );
       this.sendAsServer(
         {
           type: "init",

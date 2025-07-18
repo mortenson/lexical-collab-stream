@@ -78,7 +78,7 @@ export default function App() {
     window.location.search.indexOf("trystero") !== -1
       ? {
           type: "trystero",
-          config: { appId: "lexical_sync_demo" },
+          config: { appId: "lexical_sync_demo", relayRedundancy: 2 },
           roomId: window.location.search,
         }
       : {
