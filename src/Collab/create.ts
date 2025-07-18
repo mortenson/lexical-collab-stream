@@ -1,7 +1,5 @@
 import {
   $applyNodeReplacement,
-  $createParagraphNode,
-  $createTextNode,
   $getEditor,
   $getNodeByKey,
   $getRoot,
