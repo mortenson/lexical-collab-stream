@@ -15,7 +15,10 @@ export const $applyUpdatedMessage = (
   }
   const node = $getNodeBySyncId(map, message.node.$.syncId);
   if (!node) {
-    console.error(`Update key not found: ${message.node.$.syncId}`);
+    console.error(
+      `Update key not found: ${message.node.$.syncId}, attempting to create`,
+    );
+    $applyCreatedMessage(map, message);
     return;
   }
   // Check if the node moved, which for some reason isn't performed as a
