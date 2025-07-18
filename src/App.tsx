@@ -139,7 +139,9 @@ const DebugPlugin = (props: { events: DebugEvent[] }) => {
             {e.direction === "up" ? "↑ " : e.direction === "down" ? "↓ " : ""}
             {e.type}
             {e.message && `|${e.message}`}
-            {e.nestedMessages && "\n  ↳ " + e.nestedMessages.join("\n  ↳ ")}
+            {e.nestedMessages !== undefined &&
+              e.nestedMessages.length > 0 &&
+              "\n  ↳ " + e.nestedMessages.join("\n  ↳ ")}
           </li>
         ))}
       </ul>
