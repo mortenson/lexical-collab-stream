@@ -1,6 +1,8 @@
 import {
+  $applyNodeReplacement,
   $createParagraphNode,
   $createTextNode,
+  $getEditor,
   $getNodeByKey,
   $getRoot,
   $isElementNode,
@@ -28,22 +30,17 @@ export const $applyCreatedMessage = (
     );
     return;
   }
-  let messageNode;
-  switch (message.node.type) {
-    case "paragraph":
-      messageNode = $createParagraphNode().updateFromJSON(
-        // @ts-ignore
-        message.node,
-      );
-      break;
-    case "text":
-      // @ts-ignore
-      messageNode = $createTextNode().updateFromJSON(message.node);
-      break;
-    default:
-      console.error(`Got unknown type ${message.node.type}`);
-      return;
+  const editor = $getEditor();
+  const nodeType = editor._nodes.get(message.node.type);
+  if (nodeType === undefined) {
+    console.error(
+      `Editor cannot construct node type ${message.node.type}: ${JSON.stringify(message.node)}`,
+    );
+    return;
   }
+  const messageNode = $applyNodeReplacement(
+    new nodeType.klass(),
+  ).updateFromJSON(message.node);
   // @todo: Handle out of order inserts, maybe on the server
   if (message.previousId) {
     const previousNode = $getNodeBySyncId(map, message.previousId);

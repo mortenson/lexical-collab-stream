@@ -11,7 +11,6 @@ import {
   LexicalEditor,
   NodeKey,
   NodeMutation,
-  ParagraphNode,
   REDO_COMMAND,
   SKIP_DOM_SELECTION_TAG,
   TextNode,
@@ -163,15 +162,14 @@ export class CollabInstance {
     clearTimeout(this.flushTimer);
     this.network.connect();
     this.tearDownListeners = mergeRegister(
-      // @todo Feels like we could generically support every element type?
-      this.editor.registerMutationListener(
-        ParagraphNode,
-        this.onMutation.bind(this),
-      ),
-      this.editor.registerMutationListener(
-        TextNode,
-        this.onMutation.bind(this),
-      ),
+      ...[...this.editor._nodes.entries()]
+        .filter(([k, _]) => k !== "root")
+        .map(([_, n]) =>
+          this.editor.registerMutationListener(
+            n.klass,
+            this.onMutation.bind(this),
+          ),
+        ),
       this.editor.registerNodeTransform(
         TextNode,
         this.wordSplitTransform.bind(this),

@@ -454,7 +454,8 @@ i.justify-align {
 }
 
 /* @todo: time travel severely fucks with collab for some reason */
-.debug-timetravel-button {
+.debug-timetravel-button,
+.debug-treetype-button {
   display: none;
 }
 

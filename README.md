@@ -90,8 +90,6 @@ know!
 
 ## Not implemented yet
 
-- Every node type `lexical-yjs` supports (note: I'm actually not sure the best
-  way to generically support all node types)
 - Accurate server reconciliation (there's no guarantee all clients have the
   same EditorState, we could have an explicit reconciliation cycle or something
   like rollback+reapply per the blog linked above)
