@@ -87,6 +87,7 @@ export class CollabInstance {
     onCursorsChange: CursorListener,
     onDesync: DesyncListener,
   ) {
+    // @todo Is it more idiomatic to use $getEditor everywhere?
     this.editor = editor;
     this.network = network;
     this.network.registerOpenListener(this.flushStack.bind(this));
