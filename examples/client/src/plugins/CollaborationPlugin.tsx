@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { CollabInstance } from "./CollabInstance";
-import { CollabCursor } from "./cursor";
-import { CollabWebSocket } from "./CollabWebSocket";
-import { CollabTrystero } from "./CollabTrystero";
+import {
+  CollabInstance,
+  CollabWebSocket,
+  CollabTrystero,
+} from "@mortenson/lexical-collab-stream";
+import type {
+  CollabCursor,
+  DebugListener,
+} from "@mortenson/lexical-collab-stream";
 import { BaseRoomConfig, RelayConfig, TurnConfig } from "trystero";
-import { DebugListener } from "./CollabNetwork";
 
 interface TrysteroProps {
   type: "trystero";

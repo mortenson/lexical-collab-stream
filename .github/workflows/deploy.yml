@@ -13,11 +13,13 @@ jobs:
         with:
           node-version: 24
       - run: npm install
+        working-directory: examples/client
       - run: npm run build
+        working-directory: examples/client
       - id: deployment
         uses: actions/upload-pages-artifact@v3
         with:
-          path: dist/
+          path: examples/client/dist
 
   deploy:
     needs: build

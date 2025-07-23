@@ -1,12 +1,15 @@
 import { WebSocketServer, WebSocket } from "ws";
 import Redis from "ioredis";
 import type { SerializedEditorState } from "lexical";
-import { isPeerMessage, isSyncMessageClient } from "./src/Collab/Messages";
+import {
+  isPeerMessage,
+  isSyncMessageClient,
+} from "@mortenson/lexical-collab-stream";
 import type {
   PeerMessage,
   SyncMessageClient,
   SyncMessageServer,
-} from "./src/Collab/Messages";
+} from "@mortenson/lexical-collab-stream";
 import parseArgs from "minimist";
 
 // @todo: run real webserver and have this be in path, or put in every message

@@ -22,9 +22,9 @@ import ToolbarPlugin from "./plugins/ToolbarPlugin";
 import TreeViewPlugin from "./plugins/TreeViewPlugin";
 import CollaborationPlugin, {
   NetworkProps,
-} from "./Collab/CollaborationPlugin";
+} from "./plugins/CollaborationPlugin";
 import { useMemo, useState } from "react";
-import { DebugEvent } from "./Collab/CollabNetwork";
+import type { DebugEvent } from "@mortenson/lexical-collab-stream";
 
 const placeholder = "Enter some rich text...";
 
