@@ -71,6 +71,18 @@ const editorConfig: InitialConfigType = {
     throw error;
   },
   theme: ExampleTheme,
+  // A commented out example of soft deleting, which may lead to less
+  // conflicts. See `src/Collab/ImmortalTextNode.ts` for details.
+  // nodes: [
+  //     ImmortalTextNode,
+  //     {
+  //         replace: TextNode,
+  //         with: (node: TextNode) => {
+  //             return $createImmortalTextNode(node.getTextContent());
+  //         },
+  //         withKlass: ImmortalTextNode,
+  //     }
+  // ]
 };
 
 export default function App() {
