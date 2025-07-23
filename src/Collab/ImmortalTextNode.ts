@@ -48,9 +48,11 @@ export class ImmortalTextNode extends TextNode {
     return super.updateDOM(prevNode, dom, config);
   }
 
-  remove(preserveEmptyParent?: boolean): void {
-    // "interesting" hack to ensure users can continue typing without
-    // inserting text into a soft deleted immortal text node.
+  // note: the preserveEmptyParent param is avoided here as we wouldn't want to
+  // "hard delete" parents either. would add back in complete implemetation.
+  remove(): void {
+    // "interesting" hack to ensure users can continue typing without inserting
+    // text into a soft deleted immortal text node.
     if (this.getPreviousSibling() === null) {
       this.insertBefore($createImmortalTextNode(""));
     }
