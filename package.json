@@ -8,13 +8,18 @@
     "prettier": "prettier . --write"
   },
   "dependencies": {
-    "@lexical/utils": "^0.33.0",
-    "lexical": "0.33.0",
+    "@lexical/react": "^0.33.1",
+    "@lexical/utils": "^0.33.1",
+    "lexical": "0.33.1",
     "prettier": "3.6.2",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
     "trystero": "^0.21.6",
     "uuid": "^11.1.0"
   },
   "devDependencies": {
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
     "typescript": "^5.2.2",
     "vite": "^5.2.11",
     "vite-plugin-dts": "^4.5.4"

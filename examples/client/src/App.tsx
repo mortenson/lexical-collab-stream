@@ -20,11 +20,16 @@ import { DOMConversionMap, TextNode } from "lexical";
 import ExampleTheme from "./ExampleTheme";
 import ToolbarPlugin from "./plugins/ToolbarPlugin";
 import TreeViewPlugin from "./plugins/TreeViewPlugin";
-import CollaborationPlugin, {
+import { useMemo, useRef, useState } from "react";
+import type {
+  CollabCursor,
+  DebugEvent,
+} from "@mortenson/lexical-collab-stream";
+import {
+  CollaborationPlugin,
+  CursorElement,
   NetworkProps,
-} from "./plugins/CollaborationPlugin";
-import { useMemo, useState } from "react";
-import type { DebugEvent } from "@mortenson/lexical-collab-stream";
+} from "@mortenson/lexical-collab-stream";
 
 const placeholder = "Enter some rich text...";
 
@@ -99,15 +104,42 @@ export default function App() {
         };
   const userId = useMemo(() => "user_" + Math.floor(Math.random() * 100), []);
   const [debug, setDebug] = useState<DebugEvent[]>([]);
-  const debugListener = (e: DebugEvent) => setDebug((prev) => [e, ...prev]);
+  const [cursors, setCursors] = useState<Map<string, CollabCursor>>();
+  const [connected, setConnected] = useState<boolean>();
+  const [desynced, setDesynced] = useState(false);
   return (
     <LexicalComposer initialConfig={editorConfig}>
       <div className="editor-container">
         <CollaborationPlugin
           network={network}
           userId={userId}
-          debugListener={debugListener}
+          cursorListener={(cursors) => setCursors(new Map(cursors))}
+          desyncListener={() => setDesynced(true)}
+          debugListener={(e) => setDebug((prev) => [e, ...prev])}
+          debugConnected={connected}
         />
+        <>
+          {desynced && (
+            <div className="desync-warning">
+              Your editor is too far behind the remote stream to catch up!
+            </div>
+          )}
+          <button
+            onClick={() =>
+              setConnected(connected === undefined ? false : !connected)
+            }
+          >
+            {connected === true || connected === undefined
+              ? "Disconnect"
+              : "Connect"}
+          </button>
+          {cursors &&
+            Array.from(cursors.entries()).map(([userId, cursor]) => {
+              return (
+                <CursorElement userId={userId} cursor={cursor} key={userId} />
+              );
+            })}
+        </>
         <ToolbarPlugin />
         <div className="editor-inner">
           <RichTextPlugin

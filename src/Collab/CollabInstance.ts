@@ -53,9 +53,9 @@ const SYNC_TAG = "SYNC_TAG";
 
 const SYNC_UNDO_TAG = "SYNC_UNDO_TAG";
 
-type CursorListener = (cursors: Map<string, CollabCursor>) => void;
+export type CursorListener = (cursors: Map<string, CollabCursor>) => void;
 
-type DesyncListener = () => void;
+export type DesyncListener = () => void;
 
 export class CollabInstance {
   syncIdMap: SyncIdMap;

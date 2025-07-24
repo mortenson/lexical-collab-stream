@@ -8,5 +8,6 @@ export type {
 } from "./Collab/CollabNetwork";
 export { CollabTrystero } from "./Collab/CollabTrystero";
 export { CollabWebSocket } from "./Collab/CollabWebSocket";
-export type { CollabCursor } from "./Collab/cursor.ts";
+export type { CollabCursor } from "./Collab/cursor";
+export * from "./plugins/CollaborationPlugin";
 export * from "./Collab/Messages";

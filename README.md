@@ -1,44 +1,13 @@
 # Lexical Collab Stream
 
-## Preamble
+A "taken too far" proof of concept for how you can achieve collaborative text
+editing in Lexical by streaming mutations to peers.
 
-After reading the article "[Collaborative Text Editing without CRDTs or OT](https://mattweidner.com/2025/05/21/text-without-crdts.html)",
-I thought that it's be fun to try to build a collaborative editor without Yjs.
+## Installation and use
 
-Here's how it works:
+First, install the package:
 
-1. Ensure that every node has a (unique) UUID by watching for create mutations.
-2. A mapping is (poorly?) maintained between UUIDs and NodeKeys
-3. A custom Node Transform is used to (try to) split TextNodes by word (more
-   nodes == better sync, probably)
-4. Clients connect to a websocket server and receive the current EditorState
-   and the stream ID associated with that document.
-5. A mutation listener sends websocket messages that contain a serialized node
-   and information required to upsert/destroy it. On the server, these messages
-   are added to a Redis stream and later streamed back to peers.
-6. A websocket listener receives messages from other clients and upserts nodes
-   from JSON, or destroys them. Node insertion is always relative to a sibling or
-   parent.
-
-For demo purposes, [Trystero](https://github.com/dmotz/trystero/issues) can be
-used to connect clients using WebRTC. I'm not fully comfortable with the
-implementation but didn't want to have to host a Websocket implementation for
-demo purposes. The fact that it works may prove...something?
-
-## Attempt to diagram
-
-```mermaid
-flowchart RL
-  Redis@{ shape: cyl, label: "Redis Stream" }
-  Client -- "insertAfter" --> EditorState
-  EditorState -- "onMutation" --> Client
-  Client -- "sendMessage" --> Server
-  Server -- "onMessage" --> Client
-  Server -- "XADD" --> Redis
-  Redis -- "XREAD" --> Server
-```
-
-## Requirements
+`npm install --save @mortenson/lexical-collab-stream`
 
 - Redis running locally on port 6379
 
@@ -89,6 +58,44 @@ own project you can:
 
 If you end up using the project and would prefer it as an NPM package, let me
 know!
+
+## Preamble
+
+After reading the article "[Collaborative Text Editing without CRDTs or OT](https://mattweidner.com/2025/05/21/text-without-crdts.html)",
+I thought that it's be fun to try to build a collaborative editor without Yjs.
+
+Here's how it works:
+
+1. Ensure that every node has a (unique) UUID by watching for create mutations.
+2. A mapping is (poorly?) maintained between UUIDs and NodeKeys
+3. A custom Node Transform is used to (try to) split TextNodes by word (more
+   nodes == better sync, probably)
+4. Clients connect to a websocket server and receive the current EditorState
+   and the stream ID associated with that document.
+5. A mutation listener sends websocket messages that contain a serialized node
+   and information required to upsert/destroy it. On the server, these messages
+   are added to a Redis stream and later streamed back to peers.
+6. A websocket listener receives messages from other clients and upserts nodes
+   from JSON, or destroys them. Node insertion is always relative to a sibling or
+   parent.
+
+For demo purposes, [Trystero](https://github.com/dmotz/trystero/issues) can be
+used to connect clients using WebRTC. I'm not fully comfortable with the
+implementation but didn't want to have to host a Websocket implementation for
+demo purposes. The fact that it works may prove...something?
+
+## Attempt to diagram
+
+```mermaid
+flowchart RL
+  Redis@{ shape: cyl, label: "Redis Stream" }
+  Client -- "insertAfter" --> EditorState
+  EditorState -- "onMutation" --> Client
+  Client -- "sendMessage" --> Server
+  Server -- "onMessage" --> Client
+  Server -- "XADD" --> Redis
+  Redis -- "XREAD" --> Server
+```
 
 ## Not implemented yet
 

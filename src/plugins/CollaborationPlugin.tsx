@@ -1,15 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
+import { CollabCursor } from "../Collab/cursor";
+import { CollabTrystero } from "../Collab/CollabTrystero";
+import { CollabWebSocket } from "../Collab/CollabWebSocket";
+import type { DebugListener } from "../Collab/CollabNetwork";
+import { BaseRoomConfig, RelayConfig, TurnConfig } from "trystero";
 import {
   CollabInstance,
-  CollabWebSocket,
-  CollabTrystero,
-} from "@mortenson/lexical-collab-stream";
-import type {
-  CollabCursor,
-  DebugListener,
-} from "@mortenson/lexical-collab-stream";
-import { BaseRoomConfig, RelayConfig, TurnConfig } from "trystero";
+  CursorListener,
+  DesyncListener,
+} from "../Collab/CollabInstance";
 
 interface TrysteroProps {
   type: "trystero";
@@ -28,18 +28,21 @@ interface IProps {
   network: NetworkProps;
   userId: string;
   debugListener?: DebugListener;
+  desyncListener: DesyncListener;
+  cursorListener: CursorListener;
+  debugConnected?: boolean;
 }
 
-export default function CollaborationPlugin({
+export function CollaborationPlugin({
   userId,
   network,
+  desyncListener,
+  cursorListener,
   debugListener,
+  debugConnected,
 }: IProps) {
   const [editor] = useLexicalComposerContext();
-  const [cursors, setCursors] = useState<Map<string, CollabCursor>>();
-  const [connected, setConnected] = useState(true);
-  const [desynced, setDesynced] = useState(false);
-  const collab = useRef<CollabInstance>();
+  const collab = useRef<CollabInstance>(null);
   useEffect(() => {
     editor.setEditable(false);
     collab.current = new CollabInstance(
@@ -48,8 +51,8 @@ export default function CollaborationPlugin({
       network.type === "trystero"
         ? new CollabTrystero(network.config, network.roomId)
         : new CollabWebSocket(network.url),
-      (cursors) => setCursors(new Map(cursors)),
-      () => setDesynced(true),
+      cursorListener,
+      desyncListener,
     );
     if (debugListener) {
       collab.current.network.registerDebugListener(debugListener);
@@ -57,39 +60,22 @@ export default function CollaborationPlugin({
     collab.current.start();
     return () => collab.current?.stop();
   }, [editor]);
-  return (
-    <>
-      {desynced && (
-        <div className="desync-warning">
-          Your editor is too far behind the remote stream to catch up!
-        </div>
-      )}
-      <button
-        onClick={() => {
-          if (connected) {
-            collab.current?.debugDisconnect();
-          } else {
-            collab.current?.debugReconnect();
-          }
-          setConnected(!connected);
-        }}
-      >
-        {connected ? "Disconnect" : "Connect"}
-      </button>
-      {cursors &&
-        Array.from(cursors.entries()).map(([userId, cursor]) => {
-          return <CursorElement userId={userId} cursor={cursor} key={userId} />;
-        })}
-    </>
-  );
+  useEffect(() => {
+    if (debugConnected === true) {
+      collab.current?.debugReconnect();
+    } else if (debugConnected === false) {
+      collab.current?.debugDisconnect();
+    }
+  }, [debugConnected]);
+  return <></>;
 }
 
-type CursorElementProps = {
+export type CursorElementProps = {
   userId: string;
   cursor: CollabCursor;
 };
 
-const CursorElement = ({ userId, cursor }: CursorElementProps) => {
+export const CursorElement = ({ userId, cursor }: CursorElementProps) => {
   const rect: DOMRect | void = useMemo(() => {
     try {
       if (
