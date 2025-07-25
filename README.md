@@ -9,57 +9,65 @@ First, install the package:
 
 `npm install --save @mortenson/lexical-collab-stream`
 
-- Redis running locally on port 6379
+Then in your frontend framework of choice, create a `CollabInstance` and pass
+it your Lexical editor.
 
-## Running locally
-
-1. In one tab: `npm i && npm run dev`
-2. In another tab: `npm run server` (`npm run server-wipe-db` will wipe Redis
-   if needed).
-
-If you want to try out Trystero/WebRTC instead of running a websocket server,
-add the `?trystero` query param to the page.
-
-## Installation/Use
-
-The code here isn't published to NPM, yet, so if you want to try it out on your
-own project you can:
-
-1. Copy `src/Collab` somewhere in your codebase
-2. Import `CollaborationPlugin` and add `<CollaborationPlugin />` to your
-   `<LexicalComposer>` tree:
+For ease of use, a React plugin has been included which makes it easier to use
+collab stream. Here's an example of adding it to a `LexicalComposer` instance,
+and displaying cursors using a minimal ugly component:
 
 ```jsx
-<LexicalComposer>
-  <CollaborationPlugin
-    userId="userId"
-    network={{
-      type: "websocket",
-      url: "wss://example.com",
-    }}
-  />
-  {/* or */}
-  <CollaborationPlugin
-    userId="userId"
-    network={{
-      type: "trystero",
-      config: { appId: "appId", password: "secret" },
-      roomId: "roomId",
-    }}
-  />
-  ...
-</LexicalComposer>
+import type { CollabCursor } from "@mortenson/lexical-collab-stream";
+import { CollaborationPlugin, CursorElement } from "@mortenson/lexical-collab-stream";
+...
+const [cursors, setCursors] = useState();
+const [desynced, setDesynced] = useState(false);
+return (
+  <LexicalComposer>
+    <CollaborationPlugin
+      userId="userId"
+      desyncListener={() => setDesynced(true)}
+      cursorListener={(cursors) => setCursors(new Map(cursors))}
+      network={{
+        type: "websocket",
+        url: "wss://example.com",
+      }}
+    />
+    {/* or */}
+    <CollaborationPlugin
+      ...
+      network={{
+        type: "trystero",
+        config: { appId: "appId", password: "secret" },
+        roomId: "roomId",
+      }}
+    />
+    ...
+    {desynced && <div>You were offline for too long, oh no!</div>}
+    {cursors &&
+      Array.from(cursors.entries()).map(([userId, cursor]) => {
+        return (
+          <CursorElement userId={userId} cursor={cursor} key={userId} />
+        );
+      })}
+  </LexicalComposer>
+)
 ```
 
-3. If using websockets, copy `server.ts` and add authentication and document
-   handling that fits your use case. The server code is surprisingly boring
-   and does not depend on Lexical for more than types, so you can re-implement
-   it in any language.
+If you're using websockets, copy [examples/server/server.ts](examples/server/server.ts)
+and modify it as needed for your application. If people are interested I can
+add in some amount of default authentication there and make it a more of a
+"batteries included" example.
 
-If you end up using the project and would prefer it as an NPM package, let me
-know!
+_Note: re-implementing the server in another language is surprisingly simple,
+as it mostly exists as a broker for a Redis stream and doesn't require Lexical_
 
-## Preamble
+If you're using WebRTC / [Trystero](https://github.com/dmotz/trystero/issues),
+no server is required as public signaling servers are used. That said, the
+network implementation has less guarantees than websockets and may need some
+love when it comes to offline editing.
+
+## Implementation details
 
 After reading the article "[Collaborative Text Editing without CRDTs or OT](https://mattweidner.com/2025/05/21/text-without-crdts.html)",
 I thought that it's be fun to try to build a collaborative editor without Yjs.
@@ -79,12 +87,7 @@ Here's how it works:
    from JSON, or destroys them. Node insertion is always relative to a sibling or
    parent.
 
-For demo purposes, [Trystero](https://github.com/dmotz/trystero/issues) can be
-used to connect clients using WebRTC. I'm not fully comfortable with the
-implementation but didn't want to have to host a Websocket implementation for
-demo purposes. The fact that it works may prove...something?
-
-## Attempt to diagram
+### Attempt to diagram
 
 ```mermaid
 flowchart RL
@@ -96,6 +99,20 @@ flowchart RL
   Server -- "XADD" --> Redis
   Redis -- "XREAD" --> Server
 ```
+
+## Running locally
+
+For the websocket server, you'll need Redis running locally on port 6379.
+
+1. Build the library: `npm i && npm run build`
+2. In one tab, run the client:
+   `cd examples/client && npm i && npm run dev`
+3. In another tab:
+   `cd examples/server && npm i && npm run server` (`npm run server-wipe-db`
+   will wipe Redis if needed).
+
+If you want to try out Trystero/WebRTC instead of running a websocket server,
+add the `?trystero` query param to the page.
 
 ## Not implemented yet
 
@@ -133,5 +150,5 @@ Probably 60% for fun, 40% because of some things I dislike about Yjs:
 
 ## Credit
 
-This repository is cloned from `@lexical/react-rich-example`,
-`src/Collab` and `server.ts` contain the custom code for this demo.
+`examples/client` is cloned from `@lexical/react-rich-example`, the original
+LICENSE file is included even though some (minor) modifications have been made.

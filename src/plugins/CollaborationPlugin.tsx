@@ -75,6 +75,7 @@ export type CursorElementProps = {
   cursor: CollabCursor;
 };
 
+// Note: you should probably copy this as styling is pretty app-specific.
 export const CursorElement = ({ userId, cursor }: CursorElementProps) => {
   const rect: DOMRect | void = useMemo(() => {
     try {
@@ -112,6 +113,10 @@ export const CursorElement = ({ userId, cursor }: CursorElementProps) => {
     <div
       className="collab-cursor"
       style={{
+        position: "absolute",
+        zIndex: 999,
+        pointerEvents: "none",
+        background: "rgba(93, 255, 59, 0.25)",
         left: `${rect.x + window.scrollX}px`,
         top: `${rect.y + window.scrollY}px`,
         width: `${rect.width > 2 ? rect.width : 2}px`,
@@ -120,7 +125,16 @@ export const CursorElement = ({ userId, cursor }: CursorElementProps) => {
     >
       <div
         className="collab-cursor-user"
-        style={{ top: `${-1 * rect.height - 2}px` }}
+        style={{
+          position: "absolute",
+          color: "black",
+          padding: "2px 4px",
+          borderTopLeftRadius: "10px",
+          borderTopRightRadius: "10px",
+          background: "#d6ffce",
+          fontSize: "12px",
+          top: `${-1 * rect.height - 2}px`,
+        }}
       >
         {userId}
       </div>

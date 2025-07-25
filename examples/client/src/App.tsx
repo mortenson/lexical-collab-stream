@@ -20,7 +20,7 @@ import { DOMConversionMap, TextNode } from "lexical";
 import ExampleTheme from "./ExampleTheme";
 import ToolbarPlugin from "./plugins/ToolbarPlugin";
 import TreeViewPlugin from "./plugins/TreeViewPlugin";
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import type {
   CollabCursor,
   DebugEvent,
