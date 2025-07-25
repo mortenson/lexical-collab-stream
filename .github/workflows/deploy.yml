@@ -12,11 +12,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      # Build library
-      - run: npm install
+          registry-url: 'https://registry.npmjs.org'
+      # Build and push library
+      - run: npm ci
       - run: npm run build
+      - run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       # Build demo
-      - run: npm install
+      - run: npm ci
         working-directory: examples/client
       - run: npm run build
         working-directory: examples/client
