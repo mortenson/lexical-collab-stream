@@ -25,12 +25,9 @@ collab.start();
 
 For ease of use, a React plugin has been included which makes it easier to use
 collab stream. Here's an example of adding it to a `LexicalComposer` instance,
-and displaying cursors using a minimal ugly component:
+and displaying cursors using a provided minimal ugly component:
 
 ```jsx
-import type { CollabCursor } from "@mortenson/lexical-collab-stream";
-import { CollaborationPlugin, CursorElement } from "@mortenson/lexical-collab-stream";
-...
 const [cursors, setCursors] = useState();
 const [desynced, setDesynced] = useState(false);
 return (
