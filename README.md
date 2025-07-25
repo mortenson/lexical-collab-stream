@@ -7,7 +7,7 @@ editing in Lexical by streaming mutations to peers.
 
 First, install the package:
 
-`npm install --save @mortenson/lexical-collab-stream`
+`npm install --save @mortenson/lexical-collab-stream@latest`
 
 Then in your frontend framework of choice, create a `CollabInstance` and pass
 it your Lexical editor:

@@ -18,7 +18,7 @@ jobs:
       # Build and push library
       - run: npm ci
       - run: npm run build
-      - run: npm publish --provenance --access public
+      - run: npm publish --tag latest --provenance --access public
       # Build demo
       - run: npm ci
         working-directory: examples/client
