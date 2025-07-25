@@ -45,7 +45,7 @@
     >
       <button id="addpeer">Add peer</button>
       <div style="margin-top: 15px">
-        <a href="https://github.com/mortenson/lexical-sync-demo" target="_blank"
+        <a href="https://github.com/mortenson/lexical-collab-stream" target="_blank"
           >View project on GitHub</a
         >
       </div>
@@ -56,7 +56,7 @@
         window.location.search.indexOf("trystero") !== -1
           ? "trystero"
           : "websocket";
-      const src = `/lexical-sync-demo/app.html?roomId=${roomId}&network=${provider}`;
+      const src = `/lexical-collab-stream/app.html?roomId=${roomId}&network=${provider}`;
       [...document.getElementsByTagName("iframe")].forEach(
         (iframe) => (iframe.src = src),
       );
