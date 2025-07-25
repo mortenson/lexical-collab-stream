@@ -18,9 +18,7 @@ jobs:
       # Build and push library, if versions changed
       - run: npm ci
       - run: npm run build
-      - run: |
-          diff <(npm view @mortenson/lexical-collab-stream version) <(npm pkg get version | sed 's/"//g')
-          || npm publish --provenance --access public
+      - run: diff <(npm view @mortenson/lexical-collab-stream version) <(npm pkg get version | sed 's/"//g') || npm publish --provenance --access public
       # Build demo
       - run: npm ci
         working-directory: examples/client
