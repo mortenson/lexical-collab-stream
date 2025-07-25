@@ -42,7 +42,7 @@ export function CollaborationPlugin({
   debugConnected,
 }: IProps) {
   const [editor] = useLexicalComposerContext();
-  const collab = useRef<CollabInstance>(null);
+  const collab = useRef<CollabInstance>();
   useEffect(() => {
     editor.setEditable(false);
     collab.current = new CollabInstance(

@@ -10,7 +10,7 @@
     "outDir": "dist",
     "rootDirs": ["lib"],
     "strict": true,
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "jsx": "react"

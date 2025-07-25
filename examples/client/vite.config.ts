@@ -13,8 +13,12 @@ export default defineConfig({
   base: "/lexical-collab-stream",
   plugins: [react()],
   build: {
+    minify: false,
     rollupOptions: {
       input: ["index.html", "app.html"],
     },
+  },
+  resolve: {
+    dedupe: ['lexical', '@lexical/react', '@lexical/utils']
   },
 });

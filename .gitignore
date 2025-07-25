@@ -2,3 +2,5 @@ node_modules
 dist
 server.js
 *.rdb
+examples/client/lexical-collab-stream
+*tgz
