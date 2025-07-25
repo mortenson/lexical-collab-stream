@@ -10,7 +10,18 @@ First, install the package:
 `npm install --save @mortenson/lexical-collab-stream`
 
 Then in your frontend framework of choice, create a `CollabInstance` and pass
-it your Lexical editor.
+it your Lexical editor:
+
+```js
+const collab = new CollabInstance(
+  userId, // Some identifier for the user
+  editor, // Some instance of the editor
+  new CollabWebSocket("wss://example.com"),
+  // or
+  new CollabTrystero({ appId: "appId", password: "secret" }, "roomId"),
+);
+collab.start();
+```
 
 For ease of use, a React plugin has been included which makes it easier to use
 collab stream. Here's an example of adding it to a `LexicalComposer` instance,

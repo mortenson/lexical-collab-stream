@@ -19,6 +19,6 @@ export default defineConfig({
     },
   },
   resolve: {
-    dedupe: ['lexical', '@lexical/react', '@lexical/utils']
+    dedupe: ["lexical", "@lexical/react", "@lexical/utils"],
   },
 });
