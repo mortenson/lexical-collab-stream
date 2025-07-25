@@ -15,10 +15,12 @@ jobs:
           registry-url: "https://registry.npmjs.org"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      # Build and push library
+      # Build and push library, if versions changed
       - run: npm ci
       - run: npm run build
-      - run: npm publish --tag latest --provenance --access public
+      - run: |
+          diff <(npm view @mortenson/lexical-collab-stream version) <(npm pkg get version | sed 's/"//g')
+          || npm publish --provenance --access public
       # Build demo
       - run: npm ci
         working-directory: examples/client
